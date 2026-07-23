@@ -356,6 +356,55 @@ void main() {
       expect(text.attributionsAt(5), {bold});
     },
   );
+
+  test('MergeWithPreviousNodeRequest joins two text nodes at the seam', () {
+    final doc = MutableDocument(
+      nodes: [_para('a', 'hello '), _para('b', 'world')],
+    );
+    final composer = DocumentComposer();
+    final editor = _editor(doc, composer);
+
+    editor.execute([MergeWithPreviousNodeRequest('b')]);
+
+    expect(doc.nodes.length, 1);
+    expect((doc.getNodeById('a') as TextNode).text.text, 'hello world');
+    expect(doc.getNodeById('b'), isNull);
+    expect(
+      composer.selection!.extent,
+      DocumentPosition('a', const TextNodePosition(6)),
+    );
+  });
+
+  test('MergeWithPreviousNodeRequest deletes a non-text previous node', () {
+    final doc = MutableDocument(
+      nodes: [
+        HorizontalRuleNode(id: 'a'),
+        _para('b', 'world'),
+      ],
+    );
+    final composer = DocumentComposer();
+    final editor = _editor(doc, composer);
+
+    editor.execute([MergeWithPreviousNodeRequest('b')]);
+
+    expect(doc.nodes.length, 1);
+    expect(doc.getNodeById('a'), isNull);
+    expect((doc.getNodeById('b') as TextNode).text.text, 'world');
+    expect(
+      composer.selection!.extent,
+      DocumentPosition('b', const TextNodePosition(0)),
+    );
+  });
+
+  test('MergeWithPreviousNodeRequest is a no-op on the first node', () {
+    final doc = MutableDocument(nodes: [_para('a', 'hello')]);
+    final composer = DocumentComposer();
+    final editor = _editor(doc, composer);
+
+    editor.execute([MergeWithPreviousNodeRequest('a')]);
+
+    expect(doc.nodes.length, 1);
+  });
 }
 
 class _ThrowingRequest extends EditRequest {}

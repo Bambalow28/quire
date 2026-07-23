@@ -1,0 +1,18 @@
+name: quire
+description: Flutter editing UI for the Quire rich text editor.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  quire_core:
+    path: ../quire_core
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

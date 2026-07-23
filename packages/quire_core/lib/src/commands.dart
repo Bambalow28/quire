@@ -458,6 +458,47 @@ class _DeleteNodeCommand extends EditCommand {
   }
 }
 
+// --- MergeWithPreviousNodeRequest ---------------------------------------
+
+/// Merges the node identified by [nodeId] into the node immediately before
+/// it. If the previous node is a [TextNode], its text is joined with the
+/// (only-if-also-text) target node's text and the caret lands at the join
+/// point; otherwise the previous node is simply deleted and the caret lands
+/// at the start of [nodeId]. No-op if [nodeId] is the first node.
+class MergeWithPreviousNodeRequest extends EditRequest {
+  MergeWithPreviousNodeRequest(this.nodeId);
+  final String nodeId;
+}
+
+class _MergeWithPreviousNodeCommand extends EditCommand {
+  _MergeWithPreviousNodeCommand(this.request);
+  final MergeWithPreviousNodeRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final document = context.document;
+    final node = document.getNodeById(request.nodeId);
+    if (node == null) return;
+    final previous = document.getNodeBefore(request.nodeId);
+    if (previous == null) return;
+
+    if (previous is TextNode && node is TextNode) {
+      final joinOffset = previous.text.text.length;
+      previous.text = _concatText(previous.text, node.text);
+      document.deleteNode(node.id);
+      context.composer.selection = DocumentSelection.collapsed(
+        DocumentPosition(previous.id, TextNodePosition(joinOffset)),
+      );
+      executor.emit(DocumentEdited([previous.id, node.id]));
+    } else {
+      document.deleteNode(previous.id);
+      context.composer.selection = DocumentSelection.collapsed(_startOf(node));
+      executor.emit(DocumentEdited([previous.id]));
+    }
+    executor.emit(SelectionChanged());
+  }
+}
+
 // --- Default handlers ------------------------------------------------
 
 final List<EditRequestHandler> defaultRequestHandlers = [
@@ -481,4 +522,7 @@ final List<EditRequestHandler> defaultRequestHandlers = [
       request is InsertNodeRequest ? _InsertNodeCommand(request) : null,
   (request) =>
       request is DeleteNodeRequest ? _DeleteNodeCommand(request) : null,
+  (request) => request is MergeWithPreviousNodeRequest
+      ? _MergeWithPreviousNodeCommand(request)
+      : null,
 ];

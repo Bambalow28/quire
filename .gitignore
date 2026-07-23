@@ -2,3 +2,7 @@
 .packages
 pubspec.lock
 build/
+build/
+.dart_tool/
+.flutter-plugins*
+ios/Pods/
