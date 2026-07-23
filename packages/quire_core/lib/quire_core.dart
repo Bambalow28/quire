@@ -8,3 +8,4 @@ export 'src/editor.dart';
 export 'src/history.dart';
 export 'src/nodes.dart';
 export 'src/selection.dart';
+export 'src/table_commands.dart';

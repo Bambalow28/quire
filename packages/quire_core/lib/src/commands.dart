@@ -1,14 +1,11 @@
 import 'attributed_text.dart';
 import 'editor.dart';
+import 'node_ids.dart';
 import 'nodes.dart';
 import 'selection.dart';
+import 'table_commands.dart';
 
-int _idCounter = 0;
-
-/// Generates a fresh, process-unique node id.
-// ponytail: counter-based id, swap for uuid if documents are ever merged
-// across processes (e.g. collaborative editing).
-String generateNodeId() => 'node-${_idCounter++}';
+export 'node_ids.dart';
 
 AttributedText _concatText(AttributedText a, AttributedText b) {
   final offset = a.text.length;
@@ -85,9 +82,7 @@ class _DeleteSelectionCommand extends EditCommand {
     final beforeStart = startIndex > 0
         ? document.getNodeAt(startIndex - 1)
         : null;
-    final afterEnd = endIndex < document.nodes.length - 1
-        ? document.getNodeAt(endIndex + 1)
-        : null;
+    final afterEnd = document.getNodeAfter(endPos.nodeId);
     final changedIds = <String>{};
 
     for (var i = endIndex - 1; i > startIndex; i--) {
@@ -227,7 +222,7 @@ class _InsertNewlineCommand extends EditCommand {
           (position.nodePosition as UpstreamDownstreamNodePosition).isUpstream;
       final newNode = TextNode(id: generateNodeId(), text: AttributedText(''));
       if (isUpstream) {
-        document.insertNodeAt(document.getNodeIndexById(node.id), newNode);
+        document.insertNodeBefore(node.id, newNode);
       } else {
         document.insertNodeAfter(node.id, newNode);
       }
@@ -525,4 +520,5 @@ final List<EditRequestHandler> defaultRequestHandlers = [
   (request) => request is MergeWithPreviousNodeRequest
       ? _MergeWithPreviousNodeCommand(request)
       : null,
+  ...tableRequestHandlers,
 ];

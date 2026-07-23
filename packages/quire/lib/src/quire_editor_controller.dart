@@ -133,6 +133,178 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     history.execute([ChangeSelectionRequest(selection)]);
   }
 
+  // --- Table navigation/toolbar actions -------------------------------
+
+  /// The table cell the caret currently sits in, as grid coordinates
+  /// (resolving spans) — `null` when the caret isn't inside a table. Drives
+  /// which table-editing buttons the toolbar shows.
+  ({TableNode table, int row, int column})? get focusedTableCell {
+    final id = _focusedNodeId;
+    if (id == null) return null;
+    for (final node in document.nodes) {
+      if (node is! TableNode) continue;
+      final grid = node.grid;
+      for (var r = 0; r < grid.length; r++) {
+        for (var c = 0; c < grid[r].length; c++) {
+          final cell = grid[r][c];
+          if (cell != null && cell.nodes.any((n) => n.id == id)) {
+            return (table: node, row: r, column: c);
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  bool isInsideTable(String nodeId) {
+    for (final node in document.nodes) {
+      if (node is! TableNode) continue;
+      for (final row in node.rows) {
+        for (final cell in row.cells) {
+          if (cell.nodes.any((n) => n.id == nodeId)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  void insertTable({int rows = 3, int columns = 3}) {
+    history.execute([
+      InsertTableRequest(
+        rows: rows,
+        columns: columns,
+        afterNodeId: _topLevelAnchorId(),
+      ),
+    ]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) focusNode(id);
+  }
+
+  /// Never inserts inside a cell (nested tables are unsupported) — anchors
+  /// after the currently-focused top-level node, or after the table
+  /// enclosing the focused node if it's nested, or at the document end.
+  String? _topLevelAnchorId() {
+    final id = _focusedNodeId;
+    if (id == null) return null;
+    if (document.nodes.any((n) => n.id == id)) return id;
+    for (final node in document.nodes) {
+      if (node is TableNode &&
+          node.rows.any(
+            (row) => row.cells.any((c) => c.nodes.any((n) => n.id == id)),
+          )) {
+        return node.id;
+      }
+    }
+    return null;
+  }
+
+  void insertTableRowBelow() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([
+      InsertTableRowRequest(cell.table.id, atRow: cell.row + 1),
+    ]);
+  }
+
+  void deleteTableRow() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([DeleteTableRowRequest(cell.table.id, row: cell.row)]);
+  }
+
+  void insertTableColumnRight() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([
+      InsertTableColumnRequest(cell.table.id, atColumn: cell.column + 1),
+    ]);
+  }
+
+  void deleteTableColumn() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([
+      DeleteTableColumnRequest(cell.table.id, column: cell.column),
+    ]);
+  }
+
+  /// Merges the caret's cell with the cell to its right — the toolbar acts
+  /// on the caret's cell only, there is no rectangular mouse selection.
+  void mergeWithNextCell() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    final (_, columnCount) = cell.table.gridSize;
+    if (cell.column + 1 >= columnCount) return;
+    history.execute([
+      MergeTableCellsRequest(
+        cell.table.id,
+        fromRow: cell.row,
+        fromColumn: cell.column,
+        toRow: cell.row,
+        toColumn: cell.column + 1,
+      ),
+    ]);
+  }
+
+  void splitFocusedCell() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([
+      SplitTableCellRequest(cell.table.id, row: cell.row, column: cell.column),
+    ]);
+  }
+
+  /// Tab/Shift-Tab: moves the caret to the next/previous cell in reading
+  /// order (row-major over cells, wrapping into the next row); Tab in the
+  /// last cell appends a row, the way Word does.
+  void moveToAdjacentCell(String nodeId, {required bool forward}) {
+    TableNode? table;
+    var flatIndex = 0;
+    outer:
+    for (final node in document.nodes) {
+      if (node is! TableNode) continue;
+      var index = 0;
+      for (final row in node.rows) {
+        for (final cell in row.cells) {
+          if (cell.nodes.any((n) => n.id == nodeId)) {
+            table = node;
+            flatIndex = index;
+            break outer;
+          }
+          index++;
+        }
+      }
+    }
+    if (table == null) return;
+
+    final flat = [for (final row in table.rows) ...row.cells];
+    final targetIndex = forward ? flatIndex + 1 : flatIndex - 1;
+
+    TableCell? target;
+    if (targetIndex < 0) {
+      return;
+    } else if (targetIndex >= flat.length) {
+      history.execute([
+        InsertTableRowRequest(table.id, atRow: table.rows.length),
+      ]);
+      final lastRow = table.rows.last.cells;
+      target = lastRow.isEmpty ? null : lastRow.first;
+    } else {
+      target = flat[targetIndex];
+    }
+    if (target == null || target.nodes.isEmpty) return;
+
+    final firstNode = target.nodes.first;
+    final position = firstNode is TextNode
+        ? DocumentPosition(firstNode.id, const TextNodePosition(0))
+        : DocumentPosition(
+            firstNode.id,
+            const UpstreamDownstreamNodePosition.upstream(),
+          );
+    changeSelection(DocumentSelection.collapsed(position));
+    focusNode(firstNode.id);
+  }
+
   void replaceText({
     required String nodeId,
     required int start,

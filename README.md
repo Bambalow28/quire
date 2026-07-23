@@ -5,7 +5,9 @@ completeness rather than the lowest common denominator.
 
 - **`packages/quire_core`** — pure-Dart document model and edit pipeline. No
   Flutter dependency, so it runs on a server and tests without a widget tree.
-- **`packages/quire`** — the Flutter editor widget. *(not started — phase 2)*
+  Includes tables (`TableNode`), with merged cells (row/column spans).
+- **`packages/quire`** — the Flutter editor widget, including a custom
+  `RenderBox` (`TableGrid`) for rendering tables with spanning cells.
 
 Why not `flutter_quill`: its Quill Delta format is a flat list of operations, so
 nested structures (tables with merged cells, nested lists, footnotes) cannot be

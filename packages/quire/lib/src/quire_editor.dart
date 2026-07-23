@@ -1,12 +1,13 @@
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionHandleControls;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
 
 import 'node_text_controller.dart';
 import 'quire_editor_controller.dart';
+import 'table_grid.dart';
 
 // ponytail: one EditableText per node buys IME/handles/scribble for free but
 // caps selection at a single node; upgrade to a single editor-level
@@ -76,7 +77,7 @@ class _QuireEditorState extends State<QuireEditor> {
   // --- Controller/focus-node bookkeeping ----------------------------------
 
   void _syncControllers() {
-    final liveIds = widget.controller.document.nodes
+    final liveIds = widget.controller.document.nodesInDocumentOrder
         .whereType<TextNode>()
         .map((n) => n.id)
         .toSet();
@@ -87,7 +88,7 @@ class _QuireEditorState extends State<QuireEditor> {
       _focusNodes.remove(staleId)?.dispose();
     }
 
-    for (final node in widget.controller.document.nodes) {
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
       if (node is! TextNode) continue;
       if (_controllers.containsKey(node.id)) continue;
 
@@ -111,7 +112,7 @@ class _QuireEditorState extends State<QuireEditor> {
   void _pushModelToControllers() {
     _syncing = true;
     final composerSelection = widget.controller.composer.selection;
-    for (final node in widget.controller.document.nodes) {
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
       if (node is! TextNode) continue;
       final controller = _controllers[node.id];
       if (controller == null) continue;
@@ -325,6 +326,16 @@ class _QuireEditorState extends State<QuireEditor> {
             widget.controller.mergeWithPrevious(nodeId);
       }
     }
+
+    if (widget.controller.isInsideTable(nodeId)) {
+      bindings[const SingleActivator(LogicalKeyboardKey.tab)] = () =>
+          widget.controller.moveToAdjacentCell(nodeId, forward: true);
+      bindings[const SingleActivator(
+        LogicalKeyboardKey.tab,
+        shift: true,
+      )] = () =>
+          widget.controller.moveToAdjacentCell(nodeId, forward: false);
+    }
     return bindings;
   }
 
@@ -333,6 +344,7 @@ class _QuireEditorState extends State<QuireEditor> {
   Widget _buildNode(BuildContext context, DocumentNode node) {
     if (node is TextNode) return _buildTextNode(context, node);
     if (node is ImageNode) return _buildImageNode(context, node);
+    if (node is TableNode) return _buildTableNode(context, node);
     if (node is HorizontalRuleNode) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 8),
@@ -340,6 +352,48 @@ class _QuireEditorState extends State<QuireEditor> {
       );
     }
     return const SizedBox.shrink();
+  }
+
+  /// Resolves [node]'s grid and renders one child per distinct cell (a
+  /// merged cell renders once, spanning its full rectangle) — each cell's
+  /// nodes recurse back through [_buildNode], reusing the same per-node-type
+  /// widgets used at the top level.
+  Widget _buildTableNode(BuildContext context, TableNode node) {
+    final grid = node.grid;
+    final seen = <TableCell>{};
+    final children = <Widget>[];
+    for (var r = 0; r < grid.length; r++) {
+      for (var c = 0; c < grid[r].length; c++) {
+        final cell = grid[r][c];
+        if (cell == null || !seen.add(cell)) continue;
+        children.add(
+          TableCellData(
+            row: r,
+            column: c,
+            rowSpan: cell.rowSpan,
+            colSpan: cell.colSpan,
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [for (final n in cell.nodes) _buildNode(context, n)],
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: TableGrid(
+        rowCount: grid.length,
+        columnCount: grid.isEmpty ? 0 : grid[0].length,
+        columnWidths: node.columnWidths,
+        borderColor: Theme.of(context).dividerColor,
+        children: children,
+      ),
+    );
   }
 
   Widget _buildTextNode(BuildContext context, TextNode node) {

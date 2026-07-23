@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide TableCell, TableRow;
 import 'package:quire/quire.dart';
 
 void main() => runApp(const QuireExampleApp());
@@ -56,6 +56,36 @@ MutableDocument _seedDocument() => MutableDocument(
       metadata: {'blockType': 'code'},
     ),
     HorizontalRuleNode(id: 'hr'),
+    TextNode(
+      id: 'h3',
+      text: AttributedText('Tables'),
+      metadata: {'blockType': 'header2'},
+    ),
+    TableNode(
+      id: 'table1',
+      rows: [
+        TableRow(
+          cells: [
+            TableCell(
+              nodes: [
+                TextNode(id: 't1_r0c0', text: AttributedText('Merged header')),
+              ],
+              colSpan: 2,
+            ),
+          ],
+        ),
+        TableRow(
+          cells: [
+            TableCell(
+              nodes: [TextNode(id: 't1_r1c0', text: AttributedText('A1'))],
+            ),
+            TableCell(
+              nodes: [TextNode(id: 't1_r1c1', text: AttributedText('B1'))],
+            ),
+          ],
+        ),
+      ],
+    ),
     TextNode(
       id: 'p3',
       text: AttributedText('Tap in and start typing.'),

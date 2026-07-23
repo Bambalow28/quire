@@ -22,6 +22,7 @@ class QuireToolbar extends StatelessWidget {
       builder: (context, _) {
         final active = controller.activeAttributions;
         final blockType = controller.focusedTextNode?.blockType;
+        final tableCell = controller.focusedTableCell;
         // Scrolls sideways rather than wrapping: the host gives this a
         // fixed-height slot (an AppBar bottom), and a second row would
         // overflow it.
@@ -92,6 +93,43 @@ class QuireToolbar extends StatelessWidget {
                 icon: const Icon(Icons.redo),
                 onPressed: controller.canRedo ? controller.redo : null,
               ),
+              IconButton(
+                tooltip: 'Insert table',
+                icon: const Icon(Icons.table_chart_outlined),
+                onPressed: controller.insertTable,
+              ),
+              if (tableCell != null) ...[
+                IconButton(
+                  tooltip: 'Insert row below',
+                  icon: const Icon(Icons.table_rows_outlined),
+                  onPressed: controller.insertTableRowBelow,
+                ),
+                IconButton(
+                  tooltip: 'Delete row',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: controller.deleteTableRow,
+                ),
+                IconButton(
+                  tooltip: 'Insert column right',
+                  icon: const Icon(Icons.view_column_outlined),
+                  onPressed: controller.insertTableColumnRight,
+                ),
+                IconButton(
+                  tooltip: 'Delete column',
+                  icon: const Icon(Icons.delete_sweep_outlined),
+                  onPressed: controller.deleteTableColumn,
+                ),
+                IconButton(
+                  tooltip: 'Merge with next cell',
+                  icon: const Icon(Icons.call_merge),
+                  onPressed: controller.mergeWithNextCell,
+                ),
+                IconButton(
+                  tooltip: 'Split cell',
+                  icon: const Icon(Icons.call_split),
+                  onPressed: controller.splitFocusedCell,
+                ),
+              ],
             ],
           ),
         );
