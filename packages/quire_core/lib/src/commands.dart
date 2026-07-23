@@ -207,6 +207,9 @@ class _InsertNewlineCommand extends EditCommand {
       if (_headingBlockTypes.contains(node.blockType)) {
         secondMetadata['blockType'] = 'paragraph';
       }
+      if (node.blockType == 'listItemTask') {
+        secondMetadata['checked'] = false;
+      }
       final newNode = TextNode(
         id: generateNodeId(),
         text: right,
@@ -494,6 +497,26 @@ class _MergeWithPreviousNodeCommand extends EditCommand {
   }
 }
 
+// --- ToggleTaskCheckedRequest --------------------------------------------
+
+class ToggleTaskCheckedRequest extends EditRequest {
+  ToggleTaskCheckedRequest(this.nodeId);
+  final String nodeId;
+}
+
+class _ToggleTaskCheckedCommand extends EditCommand {
+  _ToggleTaskCheckedCommand(this.request);
+  final ToggleTaskCheckedRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final node = context.document.getNodeById(request.nodeId);
+    if (node is! TextNode) return;
+    node.metadata = {...node.metadata, 'checked': !node.isChecked};
+    executor.emit(DocumentEdited([node.id]));
+  }
+}
+
 // --- Default handlers ------------------------------------------------
 
 final List<EditRequestHandler> defaultRequestHandlers = [
@@ -519,6 +542,9 @@ final List<EditRequestHandler> defaultRequestHandlers = [
       request is DeleteNodeRequest ? _DeleteNodeCommand(request) : null,
   (request) => request is MergeWithPreviousNodeRequest
       ? _MergeWithPreviousNodeCommand(request)
+      : null,
+  (request) => request is ToggleTaskCheckedRequest
+      ? _ToggleTaskCheckedCommand(request)
       : null,
   ...tableRequestHandlers,
 ];

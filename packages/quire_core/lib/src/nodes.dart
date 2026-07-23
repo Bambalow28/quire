@@ -115,6 +115,7 @@ class TextNode extends DocumentNode {
 
   String get blockType => metadata['blockType'] as String? ?? 'paragraph';
   int get indent => metadata['indent'] as int? ?? 0;
+  bool get isChecked => metadata['checked'] == true;
 
   @override
   String get type => 'text';

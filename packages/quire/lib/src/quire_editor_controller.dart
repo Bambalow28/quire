@@ -4,6 +4,7 @@ import 'package:quire_core/quire_core.dart';
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
 const _underlineAttribution = Attribution('underline');
+const _strikethroughAttribution = Attribution('strikethrough');
 
 /// Owns the document/composer/editor/history and is the single place the
 /// widget layer talks to the model. Every mutation goes through
@@ -50,6 +51,21 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   void toggleBold() => _toggle(_boldAttribution);
   void toggleItalic() => _toggle(_italicAttribution);
   void toggleUnderline() => _toggle(_underlineAttribution);
+  void toggleStrikethrough() => _toggle(_strikethroughAttribution);
+
+  void toggleTaskChecked(String nodeId) =>
+      history.execute([ToggleTaskCheckedRequest(nodeId)]);
+
+  /// Inserts an [ImageNode] right after the currently-focused node (or at
+  /// the document end if nothing is focused).
+  void insertImage(String url) {
+    history.execute([
+      InsertNodeRequest(
+        ImageNode(id: generateNodeId(), url: url),
+        afterNodeId: _focusedNodeId ?? document.nodes.lastOrNull?.id,
+      ),
+    ]);
+  }
 
   void _toggle(Attribution attribution) {
     final selection = composer.selection;
@@ -198,6 +214,12 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     return null;
   }
 
+  void insertTableRowAbove() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([InsertTableRowRequest(cell.table.id, atRow: cell.row)]);
+  }
+
   void insertTableRowBelow() {
     final cell = focusedTableCell;
     if (cell == null) return;
@@ -210,6 +232,14 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     final cell = focusedTableCell;
     if (cell == null) return;
     history.execute([DeleteTableRowRequest(cell.table.id, row: cell.row)]);
+  }
+
+  void insertTableColumnLeft() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([
+      InsertTableColumnRequest(cell.table.id, atColumn: cell.column),
+    ]);
   }
 
   void insertTableColumnRight() {
@@ -228,13 +258,19 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     ]);
   }
 
-  /// Merges the caret's cell with the cell to its right — the toolbar acts
-  /// on the caret's cell only, there is no rectangular mouse selection.
-  void mergeWithNextCell() {
+  /// Whether the caret's cell has a cell to its right to merge with — the
+  /// toolbar acts on the caret's cell only, there is no rectangular mouse
+  /// selection.
+  bool get canMergeFocusedCellRight {
     final cell = focusedTableCell;
-    if (cell == null) return;
+    if (cell == null) return false;
     final (_, columnCount) = cell.table.gridSize;
-    if (cell.column + 1 >= columnCount) return;
+    return cell.column + 1 < columnCount;
+  }
+
+  void mergeWithNextCell() {
+    if (!canMergeFocusedCellRight) return;
+    final cell = focusedTableCell!;
     history.execute([
       MergeTableCellsRequest(
         cell.table.id,
@@ -246,12 +282,29 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     ]);
   }
 
-  void splitFocusedCell() {
+  /// Whether the caret's cell actually spans more than one grid position —
+  /// splitting an unmerged cell would be a no-op.
+  bool get canSplitFocusedCell {
     final cell = focusedTableCell;
-    if (cell == null) return;
+    if (cell == null) return false;
+    final tableCell = cell.table.cellAt(cell.row, cell.column);
+    return tableCell != null &&
+        (tableCell.rowSpan > 1 || tableCell.colSpan > 1);
+  }
+
+  void splitFocusedCell() {
+    if (!canSplitFocusedCell) return;
+    final cell = focusedTableCell!;
     history.execute([
       SplitTableCellRequest(cell.table.id, row: cell.row, column: cell.column),
     ]);
+  }
+
+  /// Deletes the whole table the caret is currently inside.
+  void deleteTable() {
+    final cell = focusedTableCell;
+    if (cell == null) return;
+    history.execute([DeleteNodeRequest(cell.table.id)]);
   }
 
   /// Tab/Shift-Tab: moves the caret to the next/previous cell in reading

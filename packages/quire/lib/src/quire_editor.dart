@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionHandleControls;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
@@ -16,10 +18,19 @@ import 'table_grid.dart';
 /// Renders [QuireEditorController.document] as one [EditableText] per
 /// [TextNode] (plus image/rule widgets for the other node types).
 class QuireEditor extends StatefulWidget {
-  const QuireEditor({super.key, required this.controller, this.padding});
+  const QuireEditor({
+    super.key,
+    required this.controller,
+    this.padding,
+    this.placeholder,
+  });
 
   final QuireEditorController controller;
   final EdgeInsetsGeometry? padding;
+
+  /// Shown (in the host's muted theme color) when the document is a single
+  /// empty text node and nothing is focused yet — e.g. "Start writing…".
+  final String? placeholder;
 
   @override
   State<QuireEditor> createState() => _QuireEditorState();
@@ -67,11 +78,77 @@ class _QuireEditorState extends State<QuireEditor> {
   @override
   Widget build(BuildContext context) {
     final nodes = widget.controller.document.nodes;
-    return ListView.builder(
-      padding: widget.padding ?? const EdgeInsets.all(16),
-      itemCount: nodes.length,
-      itemBuilder: (context, index) => _buildNode(context, nodes[index]),
+    final padding = widget.padding ?? const EdgeInsets.all(16);
+    // A CustomScrollView with a trailing SliverFillRemaining (rather than a
+    // plain ListView) so the empty space below the last node is real,
+    // tappable layout — not dead space the ListView never lays a hit-test
+    // target over. This is this widget's equivalent of QuillEditor's
+    // `expands: true`.
+    final content = CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: padding,
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (context, index) => _buildNode(context, nodes[index]),
+              childCount: nodes.length,
+            ),
+          ),
+        ),
+        SliverFillRemaining(
+          hasScrollBody: false,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _focusLastNodeAtEnd,
+          ),
+        ),
+      ],
     );
+
+    if (!_showPlaceholder) return content;
+    return Stack(
+      children: [
+        Padding(
+          padding: padding,
+          child: IgnorePointer(
+            child: Text(
+              widget.placeholder!,
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Theme.of(context).hintColor,
+              ),
+            ),
+          ),
+        ),
+        content,
+      ],
+    );
+  }
+
+  bool get _showPlaceholder {
+    final placeholder = widget.placeholder;
+    if (placeholder == null || placeholder.isEmpty) return false;
+    if (widget.controller.focusedNodeId != null) return false;
+    final nodes = widget.controller.document.nodes;
+    if (nodes.length != 1) return false;
+    final only = nodes.first;
+    return only is TextNode && only.text.text.isEmpty;
+  }
+
+  /// Tapping the empty tail below the last node focuses that node (if it's
+  /// text) with the caret at its end — otherwise most of an almost-empty
+  /// document would be dead to taps.
+  void _focusLastNodeAtEnd() {
+    TextNode? last;
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
+      if (node is TextNode) last = node;
+    }
+    if (last == null) return;
+    widget.controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition(last.id, TextNodePosition(last.text.text.length)),
+      ),
+    );
+    widget.controller.focusNode(last.id);
   }
 
   // --- Controller/focus-node bookkeeping ----------------------------------
@@ -468,20 +545,25 @@ class _QuireEditorState extends State<QuireEditor> {
   }
 
   Widget _buildImageNode(BuildContext context, ImageNode node) {
+    Widget errorBuilder(BuildContext context, Object error, StackTrace? st) =>
+        Container(
+          height: 120,
+          alignment: Alignment.center,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: const Icon(Icons.broken_image_outlined),
+        );
+    final uri = Uri.tryParse(node.url);
+    final isNetwork =
+        uri != null && (uri.isScheme('http') || uri.isScheme('https'));
+    final image = isNetwork
+        ? Image.network(node.url, errorBuilder: errorBuilder)
+        : Image.file(File(node.url), errorBuilder: errorBuilder);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Image.network(
-            node.url,
-            errorBuilder: (context, error, stackTrace) => Container(
-              height: 120,
-              alignment: Alignment.center,
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: const Icon(Icons.broken_image_outlined),
-            ),
-          ),
+          image,
           if (node.altText != null && node.altText!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
@@ -496,7 +578,13 @@ class _QuireEditorState extends State<QuireEditor> {
   }
 
   TextStyle _styleFor(ThemeData theme, TextNode node) {
-    final base = theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16);
+    var base = theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16);
+    if (node.blockType == 'listItemTask' && node.isChecked) {
+      base = base.copyWith(
+        decoration: TextDecoration.lineThrough,
+        color: theme.hintColor,
+      );
+    }
     switch (node.blockType) {
       case 'header1':
         return base.copyWith(fontSize: 32, fontWeight: FontWeight.bold);
@@ -536,6 +624,20 @@ class _QuireEditorState extends State<QuireEditor> {
   /// the node's text style itself — otherwise it renders at the default size
   /// and its baseline drifts off the line it labels.
   Widget? _prefixFor(BuildContext context, TextNode node) {
+    if (node.blockType == 'listItemTask') {
+      return Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: Checkbox(
+          value: node.isChecked,
+          visualDensity: VisualDensity.compact,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          // canRequestFocus: false keeps the checkbox from stealing focus
+          // (and thus the keyboard) away from the node's text field.
+          focusNode: FocusNode(canRequestFocus: false),
+          onChanged: (_) => widget.controller.toggleTaskChecked(node.id),
+        ),
+      );
+    }
     final label = switch (node.blockType) {
       'listItemUnordered' => '•',
       'listItemOrdered' =>

@@ -225,4 +225,210 @@ void main() {
 
     expect(controller.document.toJson(), originalJson);
   });
+
+  testWidgets('tapping below the last node focuses it with the caret at end', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(id: 'a', text: AttributedText('hello')),
+          TextNode(id: 'b', text: AttributedText('world')),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 600,
+            child: QuireEditor(controller: controller),
+          ),
+        ),
+      ),
+    );
+
+    // Tap far below where the two short text nodes render.
+    await tester.tapAt(const Offset(200, 500));
+    await tester.pump();
+
+    expect(controller.focusedNodeId, 'b');
+    expect(
+      controller.composer.selection,
+      DocumentSelection.collapsed(
+        DocumentPosition('b', const TextNodePosition(5)),
+      ),
+    );
+  });
+
+  testWidgets('the placeholder shows on an empty document and hides once '
+      'there is text', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: QuireEditor(
+            controller: controller,
+            placeholder: 'Start writing…',
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Start writing…'), findsOneWidget);
+
+    await tester.enterText(find.byType(EditableText).first, 'hi');
+    await tester.pump();
+
+    expect(find.text('Start writing…'), findsNothing);
+  });
+
+  testWidgets('the placeholder hides once the field is focused', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: QuireEditor(
+            controller: controller,
+            placeholder: 'Start writing…',
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Start writing…'), findsOneWidget);
+
+    await tester.tap(find.byType(EditableText).first);
+    await tester.pump();
+
+    expect(find.text('Start writing…'), findsNothing);
+  });
+
+  testWidgets('a task item renders a checkbox and tapping toggles the model', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('buy milk'),
+            metadata: {'blockType': 'listItemTask'},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    expect(find.byType(Checkbox), findsOneWidget);
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isFalse);
+
+    await tester.tap(find.byType(Checkbox));
+    await tester.pump();
+
+    expect(
+      (controller.document.getNodeById('a') as TextNode).isChecked,
+      isTrue,
+    );
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isTrue);
+  });
+
+  testWidgets('tapping the checkbox does not steal focus from the text field', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('buy milk'),
+            metadata: {'blockType': 'listItemTask'},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    await tester.tap(find.byType(EditableText).first);
+    await tester.pumpAndSettle();
+    expect(controller.focusedNodeId, 'a');
+
+    await tester.tap(find.byType(Checkbox));
+    await tester.pump();
+
+    expect(controller.focusedNodeId, 'a');
+  });
+
+  testWidgets('a checked task item renders struck through', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('buy milk'),
+            metadata: {'blockType': 'listItemTask', 'checked': true},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    final field = tester.widget<EditableText>(find.byType(EditableText).first);
+    expect(field.style.decoration, TextDecoration.lineThrough);
+  });
+
+  testWidgets(
+    'an ImageNode with a filesystem path builds an Image with a FileImage provider',
+    (tester) async {
+      // No real file is written to disk — the assertion is about which
+      // ImageProvider the non-http branch picks, not decode/paint, so a
+      // path that merely fails to parse as http(s) is enough.
+      const path = '/Users/someone/Documents/notesync/images/photo.png';
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [ImageNode(id: 'img', url: path)],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      final image = tester.widget<Image>(find.byType(Image));
+      expect(image.image, isA<FileImage>());
+      expect((image.image as FileImage).file.path, path);
+    },
+  );
+
+  testWidgets(
+    'an ImageNode with a bad filesystem path shows the placeholder instead of throwing',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [ImageNode(id: 'img', url: '/no/such/file/quire_missing.png')],
+        ),
+      );
+      // A real failed decode of a nonexistent file never settles inside the
+      // sandboxed test runner (dart:io file reads don't resolve here), so
+      // rather than waiting on that, drive the widget's own errorBuilder
+      // directly — the same callback Flutter invokes on a real decode
+      // failure — and assert it paints the placeholder instead of throwing.
+      await _pumpEditor(tester, controller);
+      final image = tester.widget<Image>(find.byType(Image));
+      final placeholder = image.errorBuilder!(
+        tester.element(find.byType(Image)),
+        Exception('simulated decode failure'),
+        null,
+      );
+      await tester.pumpWidget(MaterialApp(home: placeholder));
+
+      expect(find.byIcon(Icons.broken_image_outlined), findsOneWidget);
+    },
+  );
 }

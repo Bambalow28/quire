@@ -1,0 +1,15 @@
+name: quire_delta
+description: Converts Quill Delta documents (flutter_quill) into Quire documents.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  quire_core:
+    path: ../quire_core
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^5.0.0

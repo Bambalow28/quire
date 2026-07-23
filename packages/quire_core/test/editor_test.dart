@@ -405,6 +405,53 @@ void main() {
 
     expect(doc.nodes.length, 1);
   });
+
+  test('ToggleTaskCheckedRequest flips checked and undo restores it', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para('a', 'buy milk', metadata: {'blockType': 'listItemTask'}),
+      ],
+    );
+    final composer = DocumentComposer();
+    final editor = Editor(
+      doc,
+      composer,
+      requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+    );
+    final history = EditHistory(editor);
+
+    expect((doc.getNodeById('a') as TextNode).isChecked, isFalse);
+
+    history.execute([ToggleTaskCheckedRequest('a')]);
+    expect((doc.getNodeById('a') as TextNode).isChecked, isTrue);
+
+    history.undo();
+    expect((doc.getNodeById('a') as TextNode).isChecked, isFalse);
+  });
+
+  test('Enter after a checked task item produces an unchecked one', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para(
+          'a',
+          'buy milk',
+          metadata: {'blockType': 'listItemTask', 'checked': true},
+        ),
+      ],
+    );
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(8)),
+      ),
+    );
+    final editor = _editor(doc, composer);
+
+    editor.execute([InsertNewlineRequest()]);
+
+    final second = doc.getNodeAt(1) as TextNode;
+    expect(second.blockType, 'listItemTask');
+    expect(second.isChecked, isFalse);
+  });
 }
 
 class _ThrowingRequest extends EditRequest {}
