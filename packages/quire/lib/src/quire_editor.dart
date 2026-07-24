@@ -187,7 +187,7 @@ class _QuireEditorState extends State<QuireEditor> {
     final content = Listener(
       onPointerDown: _handlePointerDown,
       onPointerMove: _handlePointerMove,
-      onPointerUp: (_) => _endDrag(),
+      onPointerUp: _handlePointerUp,
       onPointerCancel: (_) => _endDrag(),
       child: Stack(
         key: _editorKey,
@@ -275,17 +275,42 @@ class _QuireEditorState extends State<QuireEditor> {
   /// `RenderEditable` to a text offset, then applied through the model —
   /// this is the fix for defect 1: raw `EditableText` installs no tap
   /// recognizer of its own, so without this a tap never placed a caret.
-  void _handleFieldTapDown(TextNode node, Offset globalPosition) {
-    final renderEditable = _laidOutEditable(node.id);
-    final offset =
-        renderEditable?.getPositionForPoint(globalPosition).offset ??
-        node.text.text.length;
+  /// True when the tap that just went down landed on a caret that was
+  /// already there, in a field that already had focus — that gesture means
+  /// "show me the options", not "move the caret" (a plain text field has
+  /// nowhere else to put a caret you tapped twice).
+  bool _tapRepeatsCaret = false;
+  Offset? _tapDownAt;
+
+  /// Moves the caret through EditableText's own gesture path rather than by
+  /// poking its controller: that is what builds the selection overlay
+  /// (handles, magnifier, copy/paste toolbar). A direct controller write
+  /// leaves the overlay null and showToolbar() silently does nothing.
+  void _placeCaret(String nodeId, int offset) {
+    final state = _editableKeys[nodeId]?.currentState;
+    if (state != null) {
+      state.userUpdateTextEditingValue(
+        state.textEditingValue.copyWith(
+          selection: TextSelection.collapsed(offset: offset),
+        ),
+        SelectionChangedCause.tap,
+      );
+    }
     widget.controller.changeSelection(
       DocumentSelection.collapsed(
-        DocumentPosition(node.id, TextNodePosition(offset)),
+        DocumentPosition(nodeId, TextNodePosition(offset)),
       ),
     );
-    widget.controller.requestFocus(node.id);
+  }
+
+  bool _caretAlreadyAt(String nodeId, int offset) {
+    final focusNode = _focusNodes[nodeId];
+    if (focusNode == null || !focusNode.hasFocus) return false;
+    final selection = widget.controller.composer.selection;
+    if (selection == null || !selection.isCollapsed) return false;
+    if (selection.extent.nodeId != nodeId) return false;
+    final position = selection.extent.nodePosition;
+    return position is TextNodePosition && position.offset == offset;
   }
 
   /// Resolves a global point to a document position by hit-testing every
@@ -337,7 +362,13 @@ class _QuireEditorState extends State<QuireEditor> {
 
   void _handlePointerDown(PointerDownEvent event) {
     final position = _positionAt(event.position);
-    if (position != null) widget.controller.requestFocus(position.nodeId);
+    if (position != null) {
+      final offset = (position.nodePosition as TextNodePosition).offset;
+      _tapRepeatsCaret = _caretAlreadyAt(position.nodeId, offset);
+      _tapDownAt = event.position;
+      _placeCaret(position.nodeId, offset);
+      widget.controller.requestFocus(position.nodeId);
+    }
 
     _touchHoldTimer?.cancel();
     if (event.kind == PointerDeviceKind.touch) {
@@ -351,6 +382,22 @@ class _QuireEditorState extends State<QuireEditor> {
       return;
     }
     _dragBase = position;
+  }
+
+  /// A tap that lands on the caret already sitting there means "show me the
+  /// options" — copy/paste/select all — rather than "move the caret", which
+  /// is what every native text field does. Shown on pointer *up* so the same
+  /// tap's release doesn't dismiss it.
+  void _handlePointerUp(PointerUpEvent event) {
+    final downAt = _tapDownAt;
+    final moved = downAt != null && (event.position - downAt).distance > 8;
+    if (_tapRepeatsCaret && !moved) {
+      final id = widget.controller.focusedNodeId;
+      if (id != null) _editableKeys[id]?.currentState?.showToolbar();
+    }
+    _tapRepeatsCaret = false;
+    _tapDownAt = null;
+    _endDrag();
   }
 
   void _endDrag() {
@@ -879,37 +926,31 @@ class _QuireEditorState extends State<QuireEditor> {
     // Raw EditableText installs no tap recognizer of its own (that's defect
     // 1) — onTapDown, not onTap, so the caret lands with the touch the way a
     // real text field feels.
-    final field = GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTapDown: (details) => _handleFieldTapDown(node, details.globalPosition),
-      child: CallbackShortcuts(
-        bindings: _shortcutBindings(node.id),
-        child: EditableText(
-          key: editableKey,
-          controller: controller,
-          focusNode: focusNode,
-          style: _styleFor(theme, node),
-          textAlign: _textAlignFor(node),
-          // EditableText hard-defaults this to Brightness.light (unlike
-          // TextField, which follows the theme), so an iOS keyboard would
-          // come up light inside a dark app.
-          keyboardAppearance: theme.brightness,
-          cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
-          backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
-          selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
-          maxLines: null,
-          keyboardType: TextInputType.multiline,
-          textInputAction: TextInputAction.newline,
-          selectionControls: switch (defaultTargetPlatform) {
-            TargetPlatform.iOS ||
-            TargetPlatform.macOS => cupertinoTextSelectionHandleControls,
-            _ => materialTextSelectionHandleControls,
-          },
-          contextMenuBuilder: (context, state) =>
-              AdaptiveTextSelectionToolbar.editableText(
-                editableTextState: state,
-              ),
-        ),
+    final field = CallbackShortcuts(
+      bindings: _shortcutBindings(node.id),
+      child: EditableText(
+        key: editableKey,
+        controller: controller,
+        focusNode: focusNode,
+        style: _styleFor(theme, node),
+        textAlign: _textAlignFor(node),
+        // EditableText hard-defaults this to Brightness.light (unlike
+        // TextField, which follows the theme), so an iOS keyboard would
+        // come up light inside a dark app.
+        keyboardAppearance: theme.brightness,
+        cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
+        backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
+        selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
+        maxLines: null,
+        keyboardType: TextInputType.multiline,
+        textInputAction: TextInputAction.newline,
+        selectionControls: switch (defaultTargetPlatform) {
+          TargetPlatform.iOS ||
+          TargetPlatform.macOS => cupertinoTextSelectionHandleControls,
+          _ => materialTextSelectionHandleControls,
+        },
+        contextMenuBuilder: (context, state) =>
+            AdaptiveTextSelectionToolbar.editableText(editableTextState: state),
       ),
     );
 
