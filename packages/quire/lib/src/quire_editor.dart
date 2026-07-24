@@ -1000,8 +1000,30 @@ class _QuireEditorState extends State<QuireEditor> {
           TargetPlatform.macOS => cupertinoTextSelectionHandleControls,
           _ => materialTextSelectionHandleControls,
         },
-        contextMenuBuilder: (context, state) =>
-            AdaptiveTextSelectionToolbar.editableText(editableTextState: state),
+        // Flutter's default menu offers only Select All on a collapsed
+        // caret — Cut and Copy need a selection, and it has no built-in
+        // "Select" (this word) button the way iOS does. Prepend one, so
+        // tapping the caret gives Select / Select all / Paste, and choosing
+        // Select puts Cut and Copy one tap away.
+        contextMenuBuilder: (context, state) {
+          final value = state.textEditingValue;
+          final canSelectWord =
+              value.selection.isCollapsed && value.text.isNotEmpty;
+          return AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: state.contextMenuAnchors,
+            buttonItems: [
+              if (canSelectWord)
+                ContextMenuButtonItem(
+                  label: 'Select',
+                  onPressed: () {
+                    state.hideToolbar();
+                    _selectWordAt(node.id, value.selection.baseOffset);
+                  },
+                ),
+              ...state.contextMenuButtonItems,
+            ],
+          );
+        },
       ),
     );
 
