@@ -107,6 +107,39 @@ class DocumentSelection {
   String toString() => 'DocumentSelection(base: $base, extent: $extent)';
 }
 
+/// Flattens the text covered by [selection] into a single plain string, in
+/// document order — nodes are joined with `'\n'`; non-text nodes (images,
+/// tables, rules) contribute nothing, since they have no text to copy.
+///
+// ponytail: plain text only, attribution spans are not carried across the
+// join. Upgrade to a rich clipboard representation if copy/paste ever needs
+// to preserve formatting.
+String flattenSelectionText(
+  MutableDocument document,
+  DocumentSelection selection,
+) {
+  final (startPos, endPos) = selection.normalize(document);
+  final startIndex = document.getNodeIndexById(startPos.nodeId);
+  final endIndex = document.getNodeIndexById(endPos.nodeId);
+  if (startIndex < 0 || endIndex < 0) return '';
+
+  final buffer = StringBuffer();
+  for (var i = startIndex; i <= endIndex; i++) {
+    final node = document.getNodeAt(i);
+    if (node is! TextNode) continue;
+    final length = node.text.text.length;
+    final start = i == startIndex && startPos.nodePosition is TextNodePosition
+        ? (startPos.nodePosition as TextNodePosition).offset.clamp(0, length)
+        : 0;
+    final end = i == endIndex && endPos.nodePosition is TextNodePosition
+        ? (endPos.nodePosition as TextNodePosition).offset.clamp(0, length)
+        : length;
+    if (buffer.isNotEmpty) buffer.write('\n');
+    if (end > start) buffer.write(node.text.text.substring(start, end));
+  }
+  return buffer.toString();
+}
+
 /// Holds the current selection and the styles armed for the next keystroke.
 /// Mutated only by [Editor].
 class DocumentComposer {

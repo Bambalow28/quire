@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:quire_core/quire_core.dart';
 
 const _boldAttribution = Attribution('bold');
@@ -394,4 +395,99 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     }
     if (requests.isNotEmpty) history.execute(requests);
   }
+
+  // --- Cross-node selection operations -------------------------------
+
+  void deleteSelection() {
+    final selection = composer.selection;
+    if (selection == null || selection.isCollapsed) return;
+    history.execute([DeleteSelectionRequest()]);
+  }
+
+  /// Selects the entire document, from the start of the first node to the
+  /// end of the last (in document order, so this reaches into table cells).
+  void selectAll() {
+    final ordered = document.nodesInDocumentOrder.toList();
+    if (ordered.isEmpty) return;
+    changeSelection(
+      DocumentSelection(
+        base: _startOf(ordered.first),
+        extent: _endOf(ordered.last),
+      ),
+    );
+  }
+
+  Future<void> copySelection() async {
+    final selection = composer.selection;
+    if (selection == null) return;
+    final text = flattenSelectionText(document, selection);
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+  }
+
+  Future<void> cutSelection() async {
+    final selection = composer.selection;
+    if (selection == null || selection.isCollapsed) return;
+    await copySelection();
+    history.execute([DeleteSelectionRequest()]);
+  }
+
+  Future<void> pasteClipboard() async {
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    replaceSelectionWithText(text);
+  }
+
+  /// Replaces the current selection (deleting it first, if expanded) with
+  /// [text] — used for cross-node typing and for paste. A caret-only
+  /// (collapsed) selection just inserts at that position.
+  ///
+  // ponytail: delete-then-insert is two history entries instead of one
+  // combined undo step; acceptable since it only affects the multi-node/paste
+  // path, not everyday single-character typing.
+  void replaceSelectionWithText(String text) {
+    final selection = composer.selection;
+    if (selection == null) return;
+    if (!selection.isCollapsed) deleteSelection();
+
+    final position = composer.selection?.extent;
+    if (position == null || text.isEmpty) return;
+    final nodePosition = position.nodePosition;
+    if (nodePosition is! TextNodePosition) return;
+
+    final segments = text.split('\n');
+    replaceText(
+      nodeId: position.nodeId,
+      start: nodePosition.offset,
+      end: nodePosition.offset,
+      insertedText: segments.first,
+    );
+    for (var i = 1; i < segments.length; i++) {
+      insertNewline();
+      final currentNodeId = composer.selection?.extent.nodeId;
+      if (currentNodeId != null && segments[i].isNotEmpty) {
+        replaceText(
+          nodeId: currentNodeId,
+          start: 0,
+          end: 0,
+          insertedText: segments[i],
+        );
+      }
+    }
+  }
+
+  DocumentPosition _startOf(DocumentNode node) => DocumentPosition(
+    node.id,
+    node is TextNode
+        ? const TextNodePosition(0)
+        : const UpstreamDownstreamNodePosition.upstream(),
+  );
+
+  DocumentPosition _endOf(DocumentNode node) => DocumentPosition(
+    node.id,
+    node is TextNode
+        ? TextNodePosition(node.text.text.length)
+        : const UpstreamDownstreamNodePosition.downstream(),
+  );
 }

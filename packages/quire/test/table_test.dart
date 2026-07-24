@@ -137,7 +137,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Insert table'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(FilledButton, 'Create 3 × 3 table'));
+      await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();
 
       expect(controller.document.nodes.whereType<TableNode>().length, 1);

@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 /// Word/Docs-style drag-to-size grid picker, offered to [showInsertTableDialog].
 const int _gridColumns = 10;
 const int _gridRows = 8;
-const double _cellSize = 24.0;
+// 10 columns must fit inside the dialog on the narrowest phone we support:
+// 10 x (18 + 4) = 220pt, versus ~280pt of usable dialog width at 320pt.
+const double _cellSize = 18.0;
 const double _cellGap = 4.0;
 const double _cellStride = _cellSize + _cellGap;
 
@@ -60,7 +62,7 @@ class _InsertTableDialogState extends State<_InsertTableDialog> {
         FilledButton(
           onPressed: () =>
               Navigator.of(context).pop((rows: _rows, columns: _columns)),
-          child: Text('Create $_columns × $_rows table'),
+          child: const Text('Create'),
         ),
       ],
     );

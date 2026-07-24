@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionHandleControls;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
@@ -11,9 +13,35 @@ import 'node_text_controller.dart';
 import 'quire_editor_controller.dart';
 import 'table_grid.dart';
 
-// ponytail: one EditableText per node buys IME/handles/scribble for free but
-// caps selection at a single node; upgrade to a single editor-level
-// DeltaTextInputClient when cross-node selection is needed.
+// ponytail: one EditableText per node buys IME/handles/scribble for free.
+// Cross-node selection is layered on top (editor-level drag + overlay
+// painting) rather than replacing the fields with a single editor-level
+// DeltaTextInputClient — that rewrite stays a separate, much larger project.
+
+/// Paints the highlight for a selection that spans more than one node — a
+/// field only paints its own (single-node) selection while focused, so the
+/// editor paints the rest itself. [rects] are already in the editor's local
+/// coordinate space. Pure paint logic, no document/render lookups, so it's
+/// trivially testable in isolation.
+class SelectionOverlayPainter extends CustomPainter {
+  const SelectionOverlayPainter({required this.rects, required this.color});
+
+  final List<Rect> rects;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (rects.isEmpty) return;
+    final paint = Paint()..color = color;
+    for (final rect in rects) {
+      canvas.drawRect(rect, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant SelectionOverlayPainter oldDelegate) =>
+      oldDelegate.rects != rects || oldDelegate.color != color;
+}
 
 /// Renders [QuireEditorController.document] as one [EditableText] per
 /// [TextNode] (plus image/rule widgets for the other node types).
@@ -39,13 +67,43 @@ class QuireEditor extends StatefulWidget {
 class _QuireEditorState extends State<QuireEditor> {
   final Map<String, NodeTextController> _controllers = {};
   final Map<String, FocusNode> _focusNodes = {};
+  final Map<String, GlobalKey<EditableTextState>> _editableKeys = {};
+  final GlobalKey _editorKey = GlobalKey();
+  final ScrollController _scrollController = ScrollController();
   bool _syncing = false;
   String? _lastRequestedFocusId;
+
+  /// The node+offset the current editor-level drag started at, or `null`
+  /// when no drag is in progress.
+  DocumentPosition? _dragBase;
+
+  /// Where a touch went down, and the timer that promotes it to a selection
+  /// drag. On a touch screen a plain drag scrolls — only a long-press starts
+  /// selecting, which is what every native text surface does. A precise
+  /// pointer (mouse/trackpad/stylus) selects on drag immediately.
+  Offset? _touchDownAt;
+  Timer? _touchHoldTimer;
+
+  bool get _hasMultiNodeSelection {
+    final selection = widget.controller.composer.selection;
+    return selection != null &&
+        !selection.isCollapsed &&
+        selection.base.nodeId != selection.extent.nodeId;
+  }
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onModelChanged);
+    // The overlay for a cross-node selection is painted with rects computed
+    // fresh from each field's live (post-scroll) render position — but
+    // nothing else here triggers a rebuild on scroll, so without this the
+    // overlay would go stale under the moving content.
+    // Only when a cross-node selection is actually on screen: otherwise this
+    // would rebuild every field on every scroll frame for nothing.
+    _scrollController.addListener(() {
+      if (_hasMultiNodeSelection) setState(() {});
+    });
     _syncAndPush();
   }
 
@@ -58,6 +116,8 @@ class _QuireEditorState extends State<QuireEditor> {
     for (final focusNode in _focusNodes.values) {
       focusNode.dispose();
     }
+    _touchHoldTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -84,7 +144,8 @@ class _QuireEditorState extends State<QuireEditor> {
     // tappable layout — not dead space the ListView never lays a hit-test
     // target over. This is this widget's equivalent of QuillEditor's
     // `expands: true`.
-    final content = CustomScrollView(
+    final scrollView = CustomScrollView(
+      controller: _scrollController,
       slivers: [
         SliverPadding(
           padding: padding,
@@ -103,6 +164,38 @@ class _QuireEditorState extends State<QuireEditor> {
           ),
         ),
       ],
+    );
+
+    // Document-level drag-to-select (defect 2): a raw Listener rather than a
+    // GestureDetector pan recognizer, so it never has to fight the
+    // CustomScrollView's own vertical-drag recognizer for the gesture arena
+    // — it just observes the same pointer stream. Autoscroll while dragging
+    // past the viewport edge is out of scope.
+    final content = Listener(
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: (_) => _endDrag(),
+      onPointerCancel: (_) => _endDrag(),
+      child: Stack(
+        key: _editorKey,
+        children: [
+          scrollView,
+          // Only a multi-node selection ever produces rects here — a
+          // single-node selection is left entirely to that node's own field,
+          // so this paints nothing and doesn't regress today's behaviour.
+          IgnorePointer(
+            child: CustomPaint(
+              size: Size.infinite,
+              painter: SelectionOverlayPainter(
+                rects: _computeOverlayRects(),
+                color: Theme.of(
+                  context,
+                ).colorScheme.primary.withValues(alpha: 0.3),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
 
     if (!_showPlaceholder) return content;
@@ -151,6 +244,182 @@ class _QuireEditorState extends State<QuireEditor> {
     widget.controller.focusNode(last.id);
   }
 
+  // --- Tap-to-caret / drag-to-select (document-level gesture layer) -------
+
+  /// Tap **down** (not up) on a node's text, mapped through that field's own
+  /// `RenderEditable` to a text offset, then applied through the model —
+  /// this is the fix for defect 1: raw `EditableText` installs no tap
+  /// recognizer of its own, so without this a tap never placed a caret.
+  void _handleFieldTapDown(TextNode node, Offset globalPosition) {
+    final renderEditable = _editableKeys[node.id]?.currentState?.renderEditable;
+    final offset =
+        renderEditable?.getPositionForPoint(globalPosition).offset ??
+        node.text.text.length;
+    widget.controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition(node.id, TextNodePosition(offset)),
+      ),
+    );
+    widget.controller.focusNode(node.id);
+  }
+
+  /// Resolves a global point to a document position by hit-testing every
+  /// text node's live render rect, then mapping through that node's own
+  /// `RenderEditable` — the same mapping [_handleFieldTapDown] uses for a
+  /// single tap, reused here for both ends of a drag.
+  DocumentPosition? _positionAt(Offset globalPosition) {
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
+      if (node is! TextNode) continue;
+      final renderEditable =
+          _editableKeys[node.id]?.currentState?.renderEditable;
+      if (renderEditable == null) continue;
+      final rect =
+          renderEditable.localToGlobal(Offset.zero) & renderEditable.size;
+      if (!rect.contains(globalPosition)) continue;
+      final position = renderEditable.getPositionForPoint(globalPosition);
+      return DocumentPosition(node.id, TextNodePosition(position.offset));
+    }
+    // Between two nodes (or past the last one): fall back to the vertically
+    // nearest node, so a drag doesn't freeze whenever it crosses a gap.
+    TextNode? nearest;
+    var nearestDistance = double.infinity;
+    var above = false;
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
+      if (node is! TextNode) continue;
+      final renderEditable =
+          _editableKeys[node.id]?.currentState?.renderEditable;
+      if (renderEditable == null) continue;
+      final rect =
+          renderEditable.localToGlobal(Offset.zero) & renderEditable.size;
+      final distance = globalPosition.dy < rect.top
+          ? rect.top - globalPosition.dy
+          : globalPosition.dy > rect.bottom
+          ? globalPosition.dy - rect.bottom
+          : 0.0;
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = node;
+        above = globalPosition.dy < rect.top;
+      }
+    }
+    if (nearest == null) return null;
+    return DocumentPosition(
+      nearest.id,
+      TextNodePosition(above ? 0 : nearest.text.text.length),
+    );
+  }
+
+  static const _touchHold = Duration(milliseconds: 500);
+  static const _touchSlop = 12.0;
+
+  void _handlePointerDown(PointerDownEvent event) {
+    final position = _positionAt(event.position);
+    if (position != null) widget.controller.focusNode(position.nodeId);
+
+    _touchHoldTimer?.cancel();
+    if (event.kind == PointerDeviceKind.touch) {
+      // Defer: if the finger moves first it was a scroll, not a selection.
+      _dragBase = null;
+      _touchDownAt = event.position;
+      _touchHoldTimer = Timer(_touchHold, () {
+        if (!mounted) return;
+        _dragBase = _positionAt(_touchDownAt!);
+      });
+      return;
+    }
+    _dragBase = position;
+  }
+
+  void _endDrag() {
+    _touchHoldTimer?.cancel();
+    _touchHoldTimer = null;
+    _touchDownAt = null;
+    _dragBase = null;
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    final touchDownAt = _touchDownAt;
+    if (touchDownAt != null &&
+        _dragBase == null &&
+        (event.position - touchDownAt).distance > _touchSlop) {
+      // Moved before the hold fired — this is a scroll. Let it be one.
+      _endDrag();
+      return;
+    }
+    final base = _dragBase;
+    if (base == null) return;
+    final extent = _positionAt(event.position);
+    if (extent == null) return;
+    widget.controller.changeSelection(
+      DocumentSelection(base: base, extent: extent),
+    );
+  }
+
+  /// Rects (in this editor's own coordinate space) covering every node a
+  /// multi-node selection spans, for [SelectionOverlayPainter] — empty for
+  /// no selection, a collapsed one, or one confined to a single node (that
+  /// case is left entirely to the field's own painting).
+  List<Rect> _computeOverlayRects() {
+    final selection = widget.controller.composer.selection;
+    if (selection == null || selection.isCollapsed) return const [];
+    if (selection.base.nodeId == selection.extent.nodeId) return const [];
+
+    final document = widget.controller.document;
+    final (startPos, endPos) = selection.normalize(document);
+    final startIndex = document.getNodeIndexById(startPos.nodeId);
+    final endIndex = document.getNodeIndexById(endPos.nodeId);
+    if (startIndex < 0 || endIndex < 0) return const [];
+
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (editorBox == null || !editorBox.attached) return const [];
+
+    final rects = <Rect>[];
+    for (var i = startIndex; i <= endIndex; i++) {
+      final node = document.getNodeAt(i);
+      if (node is! TextNode) continue;
+      final renderEditable =
+          _editableKeys[node.id]?.currentState?.renderEditable;
+      if (renderEditable == null) continue;
+
+      final length = node.text.text.length;
+      final segStart = i == startIndex
+          ? (startPos.nodePosition as TextNodePosition).offset
+          : 0;
+      final segEnd = i == endIndex
+          ? (endPos.nodePosition as TextNodePosition).offset
+          : length;
+      if (segEnd <= segStart) continue;
+
+      // A node fully covered up to its own end (every node except the last)
+      // has its boxes stretched to the render width, so consecutive
+      // paragraphs read as one continuous highlight instead of stopping
+      // short at the last glyph on each line.
+      final stretchToEdge = i != endIndex;
+      final boxes = renderEditable.getBoxesForSelection(
+        TextSelection(baseOffset: segStart, extentOffset: segEnd),
+      );
+      for (final box in boxes) {
+        final rect = stretchToEdge
+            ? Rect.fromLTRB(
+                box.left,
+                box.top,
+                renderEditable.size.width,
+                box.bottom,
+              )
+            : box.toRect();
+        final topLeft = editorBox.globalToLocal(
+          renderEditable.localToGlobal(rect.topLeft),
+        );
+        final bottomRight = editorBox.globalToLocal(
+          renderEditable.localToGlobal(rect.bottomRight),
+        );
+        rects.add(Rect.fromPoints(topLeft, bottomRight));
+      }
+    }
+    return rects;
+  }
+
   // --- Controller/focus-node bookkeeping ----------------------------------
 
   void _syncControllers() {
@@ -163,6 +432,7 @@ class _QuireEditorState extends State<QuireEditor> {
         in _controllers.keys.where((id) => !liveIds.contains(id)).toList()) {
       _controllers.remove(staleId)?.dispose();
       _focusNodes.remove(staleId)?.dispose();
+      _editableKeys.remove(staleId);
     }
 
     for (final node in widget.controller.document.nodesInDocumentOrder) {
@@ -178,6 +448,8 @@ class _QuireEditorState extends State<QuireEditor> {
         if (focusNode.hasFocus) widget.controller.focusNode(node.id);
       });
       _focusNodes[node.id] = focusNode;
+
+      _editableKeys[node.id] = GlobalKey<EditableTextState>();
     }
   }
 
@@ -267,6 +539,19 @@ class _QuireEditorState extends State<QuireEditor> {
         prefixLen,
         newText.length - suffixLen,
       );
+
+      // With a cross-node selection active, this field only ever showed a
+      // stale local caret (see `_pushModelToControllers`) — the diff above
+      // still correctly isolates what was typed (this node's text mirrored
+      // the model exactly before the keystroke), but the prefix/suffix
+      // offsets it's paired with are meaningless here. Replace the whole
+      // document-level selection with what was typed instead of using them.
+      final docSelection = widget.controller.composer.selection;
+      if (docSelection != null &&
+          docSelection.base.nodeId != docSelection.extent.nodeId) {
+        widget.controller.replaceSelectionWithText(insertedText);
+        return;
+      }
 
       if (insertedText.contains('\n')) {
         // A soft keyboard's Return key sends no key event — with
@@ -394,13 +679,43 @@ class _QuireEditorState extends State<QuireEditor> {
         control: true,
         shift: true,
       ): widget.controller.redo,
+      const SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+          widget.controller.selectAll,
+      const SingleActivator(LogicalKeyboardKey.keyA, control: true):
+          widget.controller.selectAll,
+      const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+          widget.controller.copySelection,
+      const SingleActivator(LogicalKeyboardKey.keyC, control: true):
+          widget.controller.copySelection,
+      const SingleActivator(LogicalKeyboardKey.keyX, meta: true):
+          widget.controller.cutSelection,
+      const SingleActivator(LogicalKeyboardKey.keyX, control: true):
+          widget.controller.cutSelection,
+      const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+          widget.controller.pasteClipboard,
+      const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+          widget.controller.pasteClipboard,
     };
 
-    final selection = _controllers[nodeId]?.selection;
-    if (selection != null && selection.isValid && selection.isCollapsed) {
-      if (selection.baseOffset == 0) {
-        bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>
-            widget.controller.mergeWithPrevious(nodeId);
+    final docSelection = widget.controller.composer.selection;
+    final isCrossNode =
+        docSelection != null &&
+        docSelection.base.nodeId != docSelection.extent.nodeId;
+    if (isCrossNode) {
+      // A field's own selection can't reach across nodes, so a bare
+      // Backspace/Delete here would otherwise fall through to EditableText
+      // deleting inside just this one node's (locally collapsed) caret.
+      bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
+          widget.controller.deleteSelection;
+      bindings[const SingleActivator(LogicalKeyboardKey.delete)] =
+          widget.controller.deleteSelection;
+    } else {
+      final selection = _controllers[nodeId]?.selection;
+      if (selection != null && selection.isValid && selection.isCollapsed) {
+        if (selection.baseOffset == 0) {
+          bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>
+              widget.controller.mergeWithPrevious(nodeId);
+        }
       }
     }
 
@@ -476,28 +791,39 @@ class _QuireEditorState extends State<QuireEditor> {
   Widget _buildTextNode(BuildContext context, TextNode node) {
     final controller = _controllers[node.id]!;
     final focusNode = _focusNodes[node.id]!;
+    final editableKey = _editableKeys[node.id]!;
     final theme = Theme.of(context);
 
-    final field = CallbackShortcuts(
-      bindings: _shortcutBindings(node.id),
-      child: EditableText(
-        controller: controller,
-        focusNode: focusNode,
-        style: _styleFor(theme, node),
-        textAlign: _textAlignFor(node),
-        cursorColor: theme.colorScheme.primary,
-        backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
-        selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
-        maxLines: null,
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        selectionControls: switch (defaultTargetPlatform) {
-          TargetPlatform.iOS ||
-          TargetPlatform.macOS => cupertinoTextSelectionHandleControls,
-          _ => materialTextSelectionHandleControls,
-        },
-        contextMenuBuilder: (context, state) =>
-            AdaptiveTextSelectionToolbar.editableText(editableTextState: state),
+    // Raw EditableText installs no tap recognizer of its own (that's defect
+    // 1) — onTapDown, not onTap, so the caret lands with the touch the way a
+    // real text field feels.
+    final field = GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTapDown: (details) => _handleFieldTapDown(node, details.globalPosition),
+      child: CallbackShortcuts(
+        bindings: _shortcutBindings(node.id),
+        child: EditableText(
+          key: editableKey,
+          controller: controller,
+          focusNode: focusNode,
+          style: _styleFor(theme, node),
+          textAlign: _textAlignFor(node),
+          cursorColor: theme.colorScheme.primary,
+          backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
+          selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
+          maxLines: null,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          selectionControls: switch (defaultTargetPlatform) {
+            TargetPlatform.iOS ||
+            TargetPlatform.macOS => cupertinoTextSelectionHandleControls,
+            _ => materialTextSelectionHandleControls,
+          },
+          contextMenuBuilder: (context, state) =>
+              AdaptiveTextSelectionToolbar.editableText(
+                editableTextState: state,
+              ),
+        ),
       ),
     );
 

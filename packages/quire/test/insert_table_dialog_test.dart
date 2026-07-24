@@ -29,6 +29,11 @@ Future<_DialogHandle> _pumpAndShow(WidgetTester tester) async {
   return handle;
 }
 
+/// The rendered size of one grid cell, derived from the grid's own box so a
+/// change to the cell constants doesn't silently move every tap target.
+double _stride(WidgetTester tester) =>
+    tester.getSize(find.byKey(const ValueKey('quireTableSizeGrid'))).width / 10;
+
 void main() {
   testWidgets('defaults to a 3 x 3 selection', (tester) async {
     await _pumpAndShow(tester);
@@ -39,12 +44,12 @@ void main() {
     await _pumpAndShow(tester);
 
     // Grid top-left is at the dialog's content origin; tap the cell at
-    // column 5, row 4 (cells are 1-indexed, 28px stride: 24 + 4 gap).
+    // column 5, row 4 (cells are 1-indexed; stride comes from the grid).
     final gridTopLeft = tester.getTopLeft(
       find.byKey(const ValueKey('quireTableSizeGrid')),
     );
     await tester.tapAt(
-      gridTopLeft + const Offset(4 * 28.0 + 10, 3 * 28.0 + 10),
+      gridTopLeft + Offset(4 * _stride(tester) + 4, 3 * _stride(tester) + 4),
     );
     await tester.pump();
 
@@ -59,8 +64,9 @@ void main() {
     final gridTopLeft = tester.getTopLeft(
       find.byKey(const ValueKey('quireTableSizeGrid')),
     );
-    final start = gridTopLeft + const Offset(10, 10);
-    final end = gridTopLeft + const Offset(6 * 28.0 + 10, 2 * 28.0 + 10);
+    final start = gridTopLeft + const Offset(4, 4);
+    final end =
+        gridTopLeft + Offset(6 * _stride(tester) + 4, 2 * _stride(tester) + 4);
     await tester.dragFrom(start, end - start);
     await tester.pump();
 
@@ -74,11 +80,11 @@ void main() {
       find.byKey(const ValueKey('quireTableSizeGrid')),
     );
     await tester.tapAt(
-      gridTopLeft + const Offset(3 * 28.0 + 10, 1 * 28.0 + 10),
+      gridTopLeft + Offset(3 * _stride(tester) + 4, 1 * _stride(tester) + 4),
     );
     await tester.pump();
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Create 4 × 2 table'));
+    await tester.tap(find.widgetWithText(FilledButton, 'Create'));
     await tester.pumpAndSettle();
 
     expect(await handle.future, (rows: 2, columns: 4));
@@ -104,7 +110,7 @@ void main() {
     final gridTopLeft = tester.getTopLeft(
       find.byKey(const ValueKey('quireTableSizeGrid')),
     );
-    await tester.tapAt(gridTopLeft + const Offset(4 * 28.0 + 10, 10));
+    await tester.tapAt(gridTopLeft + Offset(4 * _stride(tester) + 4, 4));
     await tester.pump();
 
     expect(find.bySemanticsLabel('5 by 1 table'), findsOneWidget);
