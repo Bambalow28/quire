@@ -84,7 +84,7 @@ class _QuireEditorState extends State<QuireEditor> {
   final GlobalKey _editorKey = GlobalKey();
   final ScrollController _scrollController = ScrollController();
   bool _syncing = false;
-  String? _lastRequestedFocusId;
+  int _handledFocusRequest = -1;
 
   /// The node+offset the current editor-level drag started at, or `null`
   /// when no drag is in progress.
@@ -254,7 +254,7 @@ class _QuireEditorState extends State<QuireEditor> {
         DocumentPosition(last.id, TextNodePosition(last.text.text.length)),
       ),
     );
-    widget.controller.focusNode(last.id);
+    widget.controller.requestFocus(last.id);
   }
 
   // --- Tap-to-caret / drag-to-select (document-level gesture layer) -------
@@ -285,7 +285,7 @@ class _QuireEditorState extends State<QuireEditor> {
         DocumentPosition(node.id, TextNodePosition(offset)),
       ),
     );
-    widget.controller.focusNode(node.id);
+    widget.controller.requestFocus(node.id);
   }
 
   /// Resolves a global point to a document position by hit-testing every
@@ -337,7 +337,7 @@ class _QuireEditorState extends State<QuireEditor> {
 
   void _handlePointerDown(PointerDownEvent event) {
     final position = _positionAt(event.position);
-    if (position != null) widget.controller.focusNode(position.nodeId);
+    if (position != null) widget.controller.requestFocus(position.nodeId);
 
     _touchHoldTimer?.cancel();
     if (event.kind == PointerDeviceKind.touch) {
@@ -541,11 +541,13 @@ class _QuireEditorState extends State<QuireEditor> {
 
   void _maybeRequestFocus() {
     if (!mounted) return;
+    final request = widget.controller.focusRequest;
+    if (request == _handledFocusRequest) return;
     final id = widget.controller.focusedNodeId;
-    if (id == null || id == _lastRequestedFocusId) return;
+    if (id == null) return;
     final focusNode = _focusNodes[id];
     if (focusNode == null) return;
-    _lastRequestedFocusId = id;
+    _handledFocusRequest = request;
     if (!focusNode.hasFocus) focusNode.requestFocus();
   }
 
@@ -888,6 +890,10 @@ class _QuireEditorState extends State<QuireEditor> {
           focusNode: focusNode,
           style: _styleFor(theme, node),
           textAlign: _textAlignFor(node),
+          // EditableText hard-defaults this to Brightness.light (unlike
+          // TextField, which follows the theme), so an iOS keyboard would
+          // come up light inside a dark app.
+          keyboardAppearance: theme.brightness,
           cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
           backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
           selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),

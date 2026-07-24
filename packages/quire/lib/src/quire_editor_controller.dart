@@ -32,9 +32,27 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   String? _focusedNodeId;
   String? get focusedNodeId => _focusedNodeId;
 
+  int _focusRequest = 0;
+
+  /// Bumped by [requestFocus]. The editor watches this rather than
+  /// [focusedNodeId] so that asking for the caret in the node it already
+  /// believes is focused still works — focus may have moved to a field
+  /// outside the editor (a title box, say) since it last looked.
+  int get focusRequest => _focusRequest;
+
+  /// Reports that [nodeId]'s field has taken focus. This is bookkeeping, not
+  /// a request — use [requestFocus] to actually move the caret.
   void focusNode(String nodeId) {
     if (_focusedNodeId == nodeId) return;
     _focusedNodeId = nodeId;
+    notifyListeners();
+  }
+
+  /// Asks the editor to put focus in [nodeId], even if that is already
+  /// [focusedNodeId].
+  void requestFocus(String nodeId) {
+    _focusedNodeId = nodeId;
+    _focusRequest++;
     notifyListeners();
   }
 
@@ -137,13 +155,13 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   void insertNewline() {
     history.execute([InsertNewlineRequest()]);
     final id = composer.selection?.extent.nodeId;
-    if (id != null) focusNode(id);
+    if (id != null) requestFocus(id);
   }
 
   void mergeWithPrevious(String nodeId) {
     history.execute([MergeWithPreviousNodeRequest(nodeId)]);
     final id = composer.selection?.extent.nodeId;
-    if (id != null) focusNode(id);
+    if (id != null) requestFocus(id);
   }
 
   void changeSelection(DocumentSelection? selection) {
