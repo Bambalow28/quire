@@ -282,6 +282,34 @@ class _QuireEditorState extends State<QuireEditor> {
   bool _tapRepeatsCaret = false;
   Offset? _tapDownAt;
 
+  /// Selects the word under [offset] and opens the toolbar — what a
+  /// double-tap or long-press does in any native text field, and the only
+  /// way to get Cut/Copy, which need a non-empty selection.
+  void _selectWordAt(String nodeId, int offset) {
+    final state = _editableKeys[nodeId]?.currentState;
+    final renderEditable = _laidOutEditable(nodeId);
+    if (state == null || renderEditable == null) return;
+    final word = renderEditable.getWordBoundary(TextPosition(offset: offset));
+    if (word.end <= word.start) return;
+    state.userUpdateTextEditingValue(
+      state.textEditingValue.copyWith(
+        selection: TextSelection(
+          baseOffset: word.start,
+          extentOffset: word.end,
+        ),
+      ),
+      SelectionChangedCause.longPress,
+    );
+    widget.controller.changeSelection(
+      DocumentSelection(
+        base: DocumentPosition(nodeId, TextNodePosition(word.start)),
+        extent: DocumentPosition(nodeId, TextNodePosition(word.end)),
+      ),
+    );
+    widget.controller.requestFocus(nodeId);
+    state.showToolbar();
+  }
+
   /// Moves the caret through EditableText's own gesture path rather than by
   /// poking its controller: that is what builds the selection overlay
   /// (handles, magnifier, copy/paste toolbar). A direct controller write
@@ -364,9 +392,11 @@ class _QuireEditorState extends State<QuireEditor> {
     final position = _positionAt(event.position);
     if (position != null) {
       final offset = (position.nodePosition as TextNodePosition).offset;
+      // The caret is placed on pointer *up*, not here: a tap must write the
+      // selection exactly once, or the caret write races the word selection
+      // a double-tap/long-press produces from the same gesture.
       _tapRepeatsCaret = _caretAlreadyAt(position.nodeId, offset);
       _tapDownAt = event.position;
-      _placeCaret(position.nodeId, offset);
       widget.controller.requestFocus(position.nodeId);
     }
 
@@ -377,7 +407,16 @@ class _QuireEditorState extends State<QuireEditor> {
       _touchDownAt = event.position;
       _touchHoldTimer = Timer(_touchHold, () {
         if (!mounted) return;
-        _dragBase = _positionAt(_touchDownAt!);
+        final held = _positionAt(_touchDownAt!);
+        _dragBase = held;
+        // Long-press selects the word first, the way iOS/Android do; a drag
+        // from here then extends that selection.
+        if (held != null) {
+          _selectWordAt(
+            held.nodeId,
+            (held.nodePosition as TextNodePosition).offset,
+          );
+        }
       });
       return;
     }
@@ -391,9 +430,21 @@ class _QuireEditorState extends State<QuireEditor> {
   void _handlePointerUp(PointerUpEvent event) {
     final downAt = _tapDownAt;
     final moved = downAt != null && (event.position - downAt).distance > 8;
-    if (_tapRepeatsCaret && !moved) {
-      final id = widget.controller.focusedNodeId;
-      if (id != null) _editableKeys[id]?.currentState?.showToolbar();
+    if (!moved) {
+      // ponytail: no double-tap-to-select-word yet — a second caret write in
+      // the same gesture gets reverted by EditableText's own value pipeline.
+      // Long-press covers word selection on touch; revisit with the
+      // editor-level DeltaTextInputClient rewrite.
+      final position = _positionAt(event.position);
+      if (_tapRepeatsCaret) {
+        final id = widget.controller.focusedNodeId;
+        if (id != null) _editableKeys[id]?.currentState?.showToolbar();
+      } else if (position != null && _dragBase == null) {
+        _placeCaret(
+          position.nodeId,
+          (position.nodePosition as TextNodePosition).offset,
+        );
+      }
     }
     _tapRepeatsCaret = false;
     _tapDownAt = null;
