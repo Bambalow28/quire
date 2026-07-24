@@ -5,6 +5,7 @@ import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionHandleControls;
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/rendering.dart' show RenderEditable;
 import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
@@ -253,12 +254,24 @@ class _QuireEditorState extends State<QuireEditor> {
 
   // --- Tap-to-caret / drag-to-select (document-level gesture layer) -------
 
+  /// A field's [RenderEditable], but only once it is actually attached and
+  /// laid out. Touching `size`/`localToGlobal`/`getPositionForPoint` before
+  /// that is an assertion in debug and undefined behaviour in release, and
+  /// this is reachable on the first frame and for a field the list hasn't
+  /// laid out yet.
+  RenderEditable? _laidOutEditable(String nodeId) {
+    final renderEditable = _editableKeys[nodeId]?.currentState?.renderEditable;
+    if (renderEditable == null) return null;
+    if (!renderEditable.attached || !renderEditable.hasSize) return null;
+    return renderEditable;
+  }
+
   /// Tap **down** (not up) on a node's text, mapped through that field's own
   /// `RenderEditable` to a text offset, then applied through the model —
   /// this is the fix for defect 1: raw `EditableText` installs no tap
   /// recognizer of its own, so without this a tap never placed a caret.
   void _handleFieldTapDown(TextNode node, Offset globalPosition) {
-    final renderEditable = _editableKeys[node.id]?.currentState?.renderEditable;
+    final renderEditable = _laidOutEditable(node.id);
     final offset =
         renderEditable?.getPositionForPoint(globalPosition).offset ??
         node.text.text.length;
@@ -277,8 +290,7 @@ class _QuireEditorState extends State<QuireEditor> {
   DocumentPosition? _positionAt(Offset globalPosition) {
     for (final node in widget.controller.document.nodesInDocumentOrder) {
       if (node is! TextNode) continue;
-      final renderEditable =
-          _editableKeys[node.id]?.currentState?.renderEditable;
+      final renderEditable = _laidOutEditable(node.id);
       if (renderEditable == null) continue;
       final rect =
           renderEditable.localToGlobal(Offset.zero) & renderEditable.size;
@@ -293,8 +305,7 @@ class _QuireEditorState extends State<QuireEditor> {
     var above = false;
     for (final node in widget.controller.document.nodesInDocumentOrder) {
       if (node is! TextNode) continue;
-      final renderEditable =
-          _editableKeys[node.id]?.currentState?.renderEditable;
+      final renderEditable = _laidOutEditable(node.id);
       if (renderEditable == null) continue;
       final rect =
           renderEditable.localToGlobal(Offset.zero) & renderEditable.size;
@@ -385,8 +396,7 @@ class _QuireEditorState extends State<QuireEditor> {
     for (var i = startIndex; i <= endIndex; i++) {
       final node = document.getNodeAt(i);
       if (node is! TextNode) continue;
-      final renderEditable =
-          _editableKeys[node.id]?.currentState?.renderEditable;
+      final renderEditable = _laidOutEditable(node.id);
       if (renderEditable == null) continue;
 
       final length = node.text.text.length;
