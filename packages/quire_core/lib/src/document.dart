@@ -40,17 +40,22 @@ class MutableDocument {
   /// Every node in document order: top-level nodes in list order, with a
   /// [TableNode]'s cell nodes visited row-major, immediately after the
   /// table itself.
-  Iterable<DocumentNode> get nodesInDocumentOrder sync* {
+  /// Built eagerly rather than as a `sync*` generator: callers iterate this
+  /// on every frame and several mutate the document while walking a copy,
+  /// and a materialised list is both cheaper and safe to iterate.
+  List<DocumentNode> get nodesInDocumentOrder {
+    final ordered = <DocumentNode>[];
     for (final node in _nodes) {
-      yield node;
+      ordered.add(node);
       if (node is TableNode) {
         for (final row in node.rows) {
           for (final cell in row.cells) {
-            yield* cell.nodes;
+            ordered.addAll(cell.nodes);
           }
         }
       }
     }
+    return ordered;
   }
 
   // ponytail: O(n) scan of nodesInDocumentOrder per lookup, add a cached
