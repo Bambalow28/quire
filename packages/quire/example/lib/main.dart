@@ -86,6 +86,25 @@ MutableDocument _seedDocument() => MutableDocument(
         ),
       ],
     ),
+    TableNode(
+      id: 'wide',
+      rows: [
+        for (var r = 0; r < 2; r++)
+          TableRow(
+            cells: [
+              for (var c = 0; c < 6; c++)
+                TableCell(
+                  nodes: [
+                    TextNode(
+                      id: 'w_${r}_$c',
+                      text: AttributedText('R${r + 1}C${c + 1}'),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+      ],
+    ),
     TextNode(
       id: 'p3',
       text: AttributedText('Tap in and start typing.'),

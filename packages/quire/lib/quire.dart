@@ -7,4 +7,5 @@ export 'src/quire_editor.dart';
 export 'src/quire_editor_controller.dart';
 export 'src/quire_toolbar.dart';
 export 'src/table_grid.dart';
+export 'src/table_settings_menu.dart';
 export 'package:quire_core/quire_core.dart';

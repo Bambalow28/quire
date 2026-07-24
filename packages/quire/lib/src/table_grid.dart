@@ -66,7 +66,13 @@ class TableGrid extends MultiChildRenderObjectWidget {
     required this.columnCount,
     this.columnWidths,
     required this.borderColor,
+    this.minColumnWidth = defaultMinColumnWidth,
   });
+
+  /// A column never gets narrower than this. Below it, the table stops
+  /// shrinking to the available width and lays out at its natural width
+  /// instead (the caller wraps it in a horizontal scroll view).
+  static const double defaultMinColumnWidth = 96.0;
 
   final int rowCount;
   final int columnCount;
@@ -75,6 +81,7 @@ class TableGrid extends MultiChildRenderObjectWidget {
   /// means equal-width columns.
   final List<double>? columnWidths;
   final Color borderColor;
+  final double minColumnWidth;
 
   @override
   RenderTableGrid createRenderObject(BuildContext context) => RenderTableGrid(
@@ -82,6 +89,7 @@ class TableGrid extends MultiChildRenderObjectWidget {
     columnCount: columnCount,
     columnWidths: columnWidths,
     borderColor: borderColor,
+    minColumnWidth: minColumnWidth,
   );
 
   @override
@@ -90,7 +98,8 @@ class TableGrid extends MultiChildRenderObjectWidget {
       ..rowCount = rowCount
       ..columnCount = columnCount
       ..columnWidths = columnWidths
-      ..borderColor = borderColor;
+      ..borderColor = borderColor
+      ..minColumnWidth = minColumnWidth;
   }
 }
 
@@ -123,10 +132,12 @@ class RenderTableGrid extends RenderBox
     required int columnCount,
     required List<double>? columnWidths,
     required Color borderColor,
+    double minColumnWidth = TableGrid.defaultMinColumnWidth,
   }) : _rowCount = rowCount,
        _columnCount = columnCount,
        _columnWidths = columnWidths,
-       _borderColor = borderColor;
+       _borderColor = borderColor,
+       _minColumnWidth = minColumnWidth;
 
   int _rowCount;
   int get rowCount => _rowCount;
@@ -162,6 +173,14 @@ class RenderTableGrid extends RenderBox
     markNeedsPaint();
   }
 
+  double _minColumnWidth;
+  double get minColumnWidth => _minColumnWidth;
+  set minColumnWidth(double value) {
+    if (_minColumnWidth == value) return;
+    _minColumnWidth = value;
+    markNeedsLayout();
+  }
+
   @override
   void setupParentData(RenderObject child) {
     child.parentData = TableGridParentData();
@@ -189,7 +208,13 @@ class RenderTableGrid extends RenderBox
 
   ({List<double> columnOffsets, List<double> rowOffsets, Size size})
   _resolveGeometry(BoxConstraints constraints, bool dry) {
-    final width = constraints.hasBoundedWidth ? constraints.maxWidth : 0.0;
+    // Bounded width (the common case): shrink to fit, fractions of what the
+    // parent gives us — today's behaviour. Unbounded (inside a horizontal
+    // scroll view with no explicit sizing, e.g. a wide table that scrolls):
+    // fall back to the table's natural width instead of collapsing to 0.
+    final width = constraints.hasBoundedWidth
+        ? constraints.maxWidth
+        : columnCount * minColumnWidth;
     final columnOffsets = _resolveColumnOffsets(width);
     final rowHeights = List<double>.filled(rowCount, 0);
     final entries = <_Entry>[];

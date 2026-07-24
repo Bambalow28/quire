@@ -308,6 +308,27 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     history.execute([DeleteNodeRequest(cell.table.id)]);
   }
 
+  // --- Table actions by explicit id (for the per-table settings button, --
+  // --- which doesn't require the caret to be inside the table) -----------
+
+  void addTableRowAtEnd(String tableId) {
+    final table = document.getNodeById(tableId);
+    if (table is! TableNode) return;
+    final (rowCount, _) = table.gridSize;
+    history.execute([InsertTableRowRequest(tableId, atRow: rowCount)]);
+  }
+
+  void addTableColumnAtEnd(String tableId) {
+    final table = document.getNodeById(tableId);
+    if (table is! TableNode) return;
+    final (_, columnCount) = table.gridSize;
+    history.execute([InsertTableColumnRequest(tableId, atColumn: columnCount)]);
+  }
+
+  void deleteTableById(String tableId) {
+    history.execute([DeleteNodeRequest(tableId)]);
+  }
+
   /// Tab/Shift-Tab: moves the caret to the next/previous cell in reading
   /// order (row-major over cells, wrapping into the next row); Tab in the
   /// last cell appends a row, the way Word does.

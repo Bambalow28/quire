@@ -3,6 +3,7 @@ import 'package:quire_core/quire_core.dart';
 
 import 'insert_table_dialog.dart';
 import 'quire_editor_controller.dart';
+import 'table_settings_menu.dart';
 
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
@@ -135,50 +136,9 @@ class QuireToolbar extends StatelessWidget {
                 },
               ),
               if (tableCell != null)
-                PopupMenuButton<VoidCallback>(
-                  tooltip: 'Table settings',
-                  icon: const Icon(Icons.grid_on_outlined),
-                  onSelected: (action) => action(),
-                  itemBuilder: (context) => [
-                    PopupMenuItem(
-                      value: controller.insertTableRowAbove,
-                      child: const Text('Insert row above'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.insertTableRowBelow,
-                      child: const Text('Insert row below'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.insertTableColumnLeft,
-                      child: const Text('Insert column left'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.insertTableColumnRight,
-                      child: const Text('Insert column right'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.deleteTableRow,
-                      child: const Text('Delete row'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.deleteTableColumn,
-                      child: const Text('Delete column'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.mergeWithNextCell,
-                      enabled: controller.canMergeFocusedCellRight,
-                      child: const Text('Merge with cell to the right'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.splitFocusedCell,
-                      enabled: controller.canSplitFocusedCell,
-                      child: const Text('Split cell'),
-                    ),
-                    PopupMenuItem(
-                      value: controller.deleteTable,
-                      child: const Text('Delete table'),
-                    ),
-                  ],
+                TableSettingsMenu(
+                  controller: controller,
+                  tableId: tableCell.table.id,
                 ),
             ],
           ),

@@ -12,6 +12,7 @@ import 'package:quire_core/quire_core.dart';
 import 'node_text_controller.dart';
 import 'quire_editor_controller.dart';
 import 'table_grid.dart';
+import 'table_settings_menu.dart';
 
 // ponytail: one EditableText per node buys IME/handles/scribble for free.
 // Cross-node selection is layered on top (editor-level drag + overlay
@@ -782,14 +783,63 @@ class _QuireEditorState extends State<QuireEditor> {
         );
       }
     }
+    final columnCount = grid.isEmpty ? 0 : grid[0].length;
+    final tableGrid = TableGrid(
+      rowCount: grid.length,
+      columnCount: columnCount,
+      columnWidths: node.columnWidths,
+      borderColor: Theme.of(context).dividerColor,
+      children: children,
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: TableGrid(
-        rowCount: grid.length,
-        columnCount: grid.isEmpty ? 0 : grid[0].length,
-        columnWidths: node.columnWidths,
-        borderColor: Theme.of(context).dividerColor,
-        children: children,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // A table wider than the space we can give it lays out at its
+          // natural width (RenderTableGrid falls back to that when given
+          // unbounded width) and scrolls horizontally, rather than squeezing
+          // every column down to unreadable widths. A table that fits keeps
+          // today's behaviour untouched: fractions of the available width,
+          // no scroll view.
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final naturalWidth =
+                  columnCount * TableGrid.defaultMinColumnWidth;
+              if (constraints.hasBoundedWidth &&
+                  naturalWidth > constraints.maxWidth) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: tableGrid,
+                );
+              }
+              return tableGrid;
+            },
+          ),
+          // A control that sits in the document rather than a chrome bar
+          // must not shout — small, muted, tight padding, no visual weight
+          // beyond a hint of where to tap.
+          // Material keeps a 48pt tap target around the 16pt glyph, which
+          // reads as the button being indented from (and floating below) the
+          // table's corner. Pull it back by that padding so it sits on the
+          // corner, without shrinking the tap area.
+          Transform.translate(
+            offset: const Offset(-14, -12),
+            child: TableSettingsMenu(
+              controller: widget.controller,
+              tableId: node.id,
+              icon: Icon(
+                Icons.grid_on_outlined,
+                size: 16,
+                color: Theme.of(context).hintColor,
+              ),
+              iconSize: 16,
+              padding: EdgeInsets.zero,
+            ),
+          ),
+        ],
       ),
     );
   }

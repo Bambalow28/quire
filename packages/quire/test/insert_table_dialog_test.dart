@@ -160,7 +160,9 @@ void main() {
     );
     await tester.pump();
 
-    await tester.tap(find.byTooltip('Table settings'));
+    // Two "Table settings" buttons now exist — the toolbar's and the
+    // table's own — so disambiguate to the toolbar's (the first one built).
+    await tester.tap(find.byTooltip('Table settings').first);
     await tester.pumpAndSettle();
 
     final splitItem = tester.widget<PopupMenuItem<VoidCallback>>(

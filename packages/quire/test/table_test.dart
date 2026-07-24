@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide TableCell, TableRow;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +18,10 @@ TableNode _grid(String id, int rows, int columns) => TableNode(
       cells: List.generate(columns, (c) => _cell('${id}_r${r}c$c', 'r${r}c$c')),
     ),
   ),
+);
+
+Finder _horizontalScrollView() => find.byWidgetPredicate(
+  (w) => w is SingleChildScrollView && w.scrollDirection == Axis.horizontal,
 );
 
 Future<void> _pumpEditor(
@@ -172,4 +177,139 @@ void main() {
     // cell is roughly half of it (minus its own padding).
     expect(bottomRowCellSize.width, lessThan(mergedSize.width));
   });
+
+  testWidgets(
+    'a table with more columns than fit scrolls horizontally and is wider '
+    'than the viewport',
+    (tester) async {
+      // 10 columns * the 96pt minimum > the ~768pt the default 800pt test
+      // surface leaves after the editor's default padding.
+      final controller = QuireEditorController(
+        document: MutableDocument(nodes: [_grid('t', 1, 10)]),
+      );
+      await _pumpEditor(tester, controller);
+
+      expect(_horizontalScrollView(), findsOneWidget);
+      final gridWidth = tester.getSize(find.byType(TableGrid)).width;
+      final viewportWidth =
+          tester.view.physicalSize.width / tester.view.devicePixelRatio;
+      expect(gridWidth, greaterThan(viewportWidth));
+      expect(gridWidth, moreOrLessEquals(10 * TableGrid.defaultMinColumnWidth));
+    },
+  );
+
+  testWidgets('a table that fits renders with no horizontal Scrollable', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(nodes: [_grid('t', 1, 2)]),
+    );
+    await _pumpEditor(tester, controller);
+
+    expect(_horizontalScrollView(), findsNothing);
+  });
+
+  testWidgets('the settings button appears once per table and opens the menu', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(nodes: [_grid('t', 2, 2)]),
+    );
+    await _pumpEditor(tester, controller);
+
+    expect(find.byTooltip('Table settings'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Table settings'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Add row at end'), findsOneWidget);
+    expect(find.text('Delete table'), findsOneWidget);
+  });
+
+  testWidgets(
+    'with the caret outside the table, Delete row is disabled and Add row '
+    'at end is enabled',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [_para('a', 'hello'), _grid('t', 2, 2)],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+      // Nothing focused: focusedNodeId starts out null.
+
+      await tester.tap(find.byTooltip('Table settings'));
+      await tester.pumpAndSettle();
+
+      final deleteRow = tester.widget<PopupMenuItem<VoidCallback>>(
+        find.widgetWithText(PopupMenuItem<VoidCallback>, 'Delete row'),
+      );
+      expect(deleteRow.enabled, isFalse);
+
+      final addRow = tester.widget<PopupMenuItem<VoidCallback>>(
+        find.widgetWithText(PopupMenuItem<VoidCallback>, 'Add row at end'),
+      );
+      expect(addRow.enabled, isTrue);
+    },
+  );
+
+  testWidgets(
+    'Add row at end adds a row; Delete table (after confirming) removes '
+    'the node',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(nodes: [_grid('t', 1, 2)]),
+      );
+      await _pumpEditor(tester, controller);
+
+      await tester.tap(find.byTooltip('Table settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add row at end'));
+      await tester.pumpAndSettle();
+
+      final table = controller.document.getNodeById('t') as TableNode;
+      expect(table.gridSize, (2, 2));
+
+      await tester.tap(find.byTooltip('Table settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete table'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+      await tester.pumpAndSettle();
+
+      expect(controller.document.getNodeById('t'), isNull);
+    },
+  );
+
+  testWidgets(
+    'a horizontal drag inside a wide table does not produce a text selection',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(nodes: [_grid('t', 1, 10)]),
+      );
+      await _pumpEditor(tester, controller);
+      expect(_horizontalScrollView(), findsOneWidget);
+
+      final cellCenter = tester.getCenter(find.byType(EditableText).first);
+      final gesture = await tester.startGesture(
+        cellCenter,
+        kind: PointerDeviceKind.touch,
+      );
+      // Move immediately (well within the 500ms touch-hold that would
+      // promote this into a selection drag) — this must read as a scroll.
+      await gesture.moveBy(const Offset(-200, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.moveBy(const Offset(-200, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // The initial touch-down still places a caret (a plain tap does that
+      // regardless of what follows) — what must NOT happen is the drag
+      // turning into a cross-cell *range* selection instead of a scroll.
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      expect(selection!.isCollapsed, isTrue);
+    },
+  );
 }
