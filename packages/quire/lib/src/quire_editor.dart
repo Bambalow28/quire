@@ -51,10 +51,16 @@ class QuireEditor extends StatefulWidget {
     required this.controller,
     this.padding,
     this.placeholder,
+    this.cursorColor,
   });
 
   final QuireEditorController controller;
   final EdgeInsetsGeometry? padding;
+
+  /// Caret colour. Defaults to the theme's primary colour, which is an accent
+  /// in most themes — pass the text colour where the caret should read as
+  /// part of the content rather than as a highlight.
+  final Color? cursorColor;
 
   /// Shown (in the host's muted theme color) when the document is a single
   /// empty text node and nothing is focused yet — e.g. "Start writing…".
@@ -808,7 +814,7 @@ class _QuireEditorState extends State<QuireEditor> {
           focusNode: focusNode,
           style: _styleFor(theme, node),
           textAlign: _textAlignFor(node),
-          cursorColor: theme.colorScheme.primary,
+          cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
           backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
           selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
           maxLines: null,
