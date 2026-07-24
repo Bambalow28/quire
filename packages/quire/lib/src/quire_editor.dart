@@ -295,6 +295,27 @@ class _QuireEditorState extends State<QuireEditor> {
   bool _tapRepeatsCaret = false;
   Offset? _tapDownAt;
 
+  /// The run of non-whitespace characters containing [offset] — a
+  /// model-space word boundary that doesn't depend on the field's sentinel.
+  (int, int) _wordBoundaryIn(String text, int offset) {
+    if (text.isEmpty) return (0, 0);
+    bool isWord(int i) => i >= 0 && i < text.length && !_isSpace(text[i]);
+    var start = offset.clamp(0, text.length);
+    var end = start;
+    // If the caret sits just past a word (offset == word end), select that
+    // word rather than nothing.
+    if (!isWord(start) && isWord(start - 1)) start = end = start - 1;
+    while (isWord(start - 1)) {
+      start--;
+    }
+    while (isWord(end)) {
+      end++;
+    }
+    return (start, end);
+  }
+
+  bool _isSpace(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
+
   /// Selects the word under [offset] and opens the toolbar — what a
   /// double-tap or long-press does in any native text field, and the only
   /// way to get Cut/Copy, which need a non-empty selection.
@@ -302,21 +323,25 @@ class _QuireEditorState extends State<QuireEditor> {
     final state = _editableKeys[nodeId]?.currentState;
     final renderEditable = _laidOutEditable(nodeId);
     if (state == null || renderEditable == null) return;
-    final word = renderEditable.getWordBoundary(TextPosition(offset: offset));
-    if (word.end <= word.start) return;
+    // Compute the word on the MODEL text, not via renderEditable
+    // .getWordBoundary: the leading sentinel skews the platform word
+    // segmenter (it treats "​hello" as starting a word one glyph over).
+    final modelText = _controllers[nodeId]?.attributedText.text ?? '';
+    final (wordStart, wordEnd) = _wordBoundaryIn(modelText, offset);
+    if (wordEnd <= wordStart) return;
     state.userUpdateTextEditingValue(
       state.textEditingValue.copyWith(
         selection: TextSelection(
-          baseOffset: word.start,
-          extentOffset: word.end,
+          baseOffset: _toField(wordStart),
+          extentOffset: _toField(wordEnd),
         ),
       ),
       SelectionChangedCause.longPress,
     );
     widget.controller.changeSelection(
       DocumentSelection(
-        base: DocumentPosition(nodeId, TextNodePosition(word.start)),
-        extent: DocumentPosition(nodeId, TextNodePosition(word.end)),
+        base: DocumentPosition(nodeId, TextNodePosition(wordStart)),
+        extent: DocumentPosition(nodeId, TextNodePosition(wordEnd)),
       ),
     );
     widget.controller.requestFocus(nodeId);
@@ -332,7 +357,7 @@ class _QuireEditorState extends State<QuireEditor> {
     if (state != null) {
       state.userUpdateTextEditingValue(
         state.textEditingValue.copyWith(
-          selection: TextSelection.collapsed(offset: offset),
+          selection: TextSelection.collapsed(offset: _toField(offset)),
         ),
         SelectionChangedCause.tap,
       );
@@ -366,13 +391,15 @@ class _QuireEditorState extends State<QuireEditor> {
       final rect =
           renderEditable.localToGlobal(Offset.zero) & renderEditable.size;
       if (!rect.contains(globalPosition)) continue;
-      final position = renderEditable.getPositionForPoint(globalPosition);
+      final fieldOffset = renderEditable
+          .getPositionForPoint(globalPosition)
+          .offset;
       // Clamp into the model's own length — an empty node's field carries
       // the sentinel (see `_emptyNodeSentinel`) and can report an offset the
       // (empty) model has no such position for.
       return DocumentPosition(
         node.id,
-        TextNodePosition(position.offset.clamp(0, node.text.text.length)),
+        TextNodePosition(_toModel(fieldOffset, node.text.text.length)),
       );
     }
     // Between two nodes (or past the last one): fall back to the vertically
@@ -536,7 +563,10 @@ class _QuireEditorState extends State<QuireEditor> {
       // short at the last glyph on each line.
       final stretchToEdge = i != endIndex;
       final boxes = renderEditable.getBoxesForSelection(
-        TextSelection(baseOffset: segStart, extentOffset: segEnd),
+        TextSelection(
+          baseOffset: _toField(segStart),
+          extentOffset: _toField(segEnd),
+        ),
       );
       for (final box in boxes) {
         final rect = stretchToEdge
@@ -622,7 +652,7 @@ class _QuireEditorState extends State<QuireEditor> {
 
       if (controller.text != fieldText) {
         final selection = targetsThisNode
-            ? _textSelectionFrom(composerSelection, modelText)
+            ? _textSelectionFrom(composerSelection)
             : TextSelection.collapsed(
                 offset: controller.selection.baseOffset.clamp(
                   0,
@@ -634,7 +664,7 @@ class _QuireEditorState extends State<QuireEditor> {
           selection: selection,
         );
       } else if (targetsThisNode) {
-        final selection = _textSelectionFrom(composerSelection, modelText);
+        final selection = _textSelectionFrom(composerSelection);
         if (selection != controller.selection) {
           controller.selection = selection;
         }
@@ -644,38 +674,41 @@ class _QuireEditorState extends State<QuireEditor> {
     _syncing = false;
   }
 
-  /// The text a node's field should show — a single zero-width-space
-  /// sentinel in place of an empty model string (see `_emptyNodeSentinel`),
-  /// so the field always has something a soft keyboard can delete.
-  String _fieldTextFor(String modelText) =>
-      modelText.isEmpty ? _emptyNodeSentinel : modelText;
+  /// The text a node's field shows: a single leading zero-width-space
+  /// sentinel followed by the model text. Present on EVERY node (not just
+  /// empty ones), so the start of any paragraph has a character a soft
+  /// keyboard can delete — that deletion is the only signal a soft keyboard
+  /// gives for "backspace at the very start", which is what merges a
+  /// paragraph into the one above it. The sentinel never reaches the model
+  /// (see [_stripSentinel]) or the caret math (see [_toModel]/[_toField]).
+  String _fieldTextFor(String modelText) => _emptyNodeSentinel + modelText;
 
   /// Undoes [_fieldTextFor] — the model must never see the sentinel. Strips
-  /// only a *leading* sentinel, since typing after it (the normal case once
-  /// an empty node stops being empty) leaves it at the front of the field's
-  /// text: e.g. "​hi" (sentinel + "hi") after typing "hi" into an empty node.
+  /// only a leading one; a field that has lost its leading sentinel is
+  /// [_onControllerChanged]'s signal that the user backspaced at offset 0.
   String _stripSentinel(String fieldText) =>
       fieldText.startsWith(_emptyNodeSentinel)
       ? fieldText.substring(_emptyNodeSentinel.length)
       : fieldText;
 
-  TextSelection _textSelectionFrom(
-    DocumentSelection? selection,
-    String modelText,
-  ) {
-    if (selection == null) return const TextSelection.collapsed(offset: 0);
+  /// Model offset → field offset (past the leading sentinel).
+  int _toField(int modelOffset) => modelOffset + _emptyNodeSentinel.length;
+
+  /// Field offset → model offset, clamped into the model's own length.
+  int _toModel(int fieldOffset, int modelLength) =>
+      (fieldOffset - _emptyNodeSentinel.length).clamp(0, modelLength);
+
+  TextSelection _textSelectionFrom(DocumentSelection? selection) {
+    if (selection == null) return TextSelection.collapsed(offset: _toField(0));
     final base = selection.base.nodePosition;
     final extent = selection.extent.nodePosition;
     if (base is TextNodePosition && extent is TextNodePosition) {
-      // An empty model has exactly one valid field position: right after the
-      // sentinel.
-      final fieldLength = modelText.isEmpty ? _emptyNodeSentinel.length : null;
       return TextSelection(
-        baseOffset: fieldLength ?? base.offset,
-        extentOffset: fieldLength ?? extent.offset,
+        baseOffset: _toField(base.offset),
+        extentOffset: _toField(extent.offset),
       );
     }
-    return const TextSelection.collapsed(offset: 0);
+    return TextSelection.collapsed(offset: _toField(0));
   }
 
   void _maybeRequestFocus() {
@@ -703,11 +736,13 @@ class _QuireEditorState extends State<QuireEditor> {
     final oldText = controller.attributedText.text;
     final rawNewText = controller.text;
 
-    // The sentinel itself was deleted (field went from '​' to truly
-    // empty) while the model was already empty — a soft keyboard can only
-    // express "backspace at the start of an empty paragraph" this way. Route
-    // it through the same request the physical-key binding uses.
-    if (oldText.isEmpty && rawNewText.isEmpty) {
+    // The leading sentinel was deleted with the model text otherwise
+    // unchanged — the only thing a soft keyboard can express for "backspace
+    // at the very start of this paragraph". Merge into the node above (works
+    // whether or not the paragraph had any text). A full clear
+    // (select-all + delete) also drops the sentinel but changes the text,
+    // so it falls through to the normal diff below instead.
+    if (!rawNewText.startsWith(_emptyNodeSentinel) && rawNewText == oldText) {
       // Deferred to a microtask: merging synchronously here could delete
       // this very node's own NodeTextController while it's still
       // mid-notifyListeners (this callback IS that notification) —
@@ -801,11 +836,11 @@ class _QuireEditorState extends State<QuireEditor> {
       DocumentSelection(
         base: DocumentPosition(
           nodeId,
-          TextNodePosition(selection.baseOffset.clamp(0, modelLength)),
+          TextNodePosition(_toModel(selection.baseOffset, modelLength)),
         ),
         extent: DocumentPosition(
           nodeId,
-          TextNodePosition(selection.extentOffset.clamp(0, modelLength)),
+          TextNodePosition(_toModel(selection.extentOffset, modelLength)),
         ),
       ),
     );
@@ -1084,7 +1119,13 @@ class _QuireEditorState extends State<QuireEditor> {
                   label: 'Select',
                   onPressed: () {
                     state.hideToolbar();
-                    _selectWordAt(node.id, value.selection.baseOffset);
+                    _selectWordAt(
+                      node.id,
+                      _toModel(
+                        value.selection.baseOffset,
+                        node.text.text.length,
+                      ),
+                    );
                   },
                 ),
               ...state.contextMenuButtonItems,

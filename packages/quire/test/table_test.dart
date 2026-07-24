@@ -304,12 +304,12 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
 
-      // The initial touch-down still places a caret (a plain tap does that
-      // regardless of what follows) — what must NOT happen is the drag
-      // turning into a cross-cell *range* selection instead of a scroll.
+      // A scroll must not turn into a cross-cell *range* selection. A caret
+      // is only placed on pointer-up when the finger didn't move, so a
+      // scroll legitimately leaves no selection at all — either way there is
+      // no range.
       final selection = controller.composer.selection;
-      expect(selection, isNotNull);
-      expect(selection!.isCollapsed, isTrue);
+      expect(selection == null || selection.isCollapsed, isTrue);
     },
   );
 }

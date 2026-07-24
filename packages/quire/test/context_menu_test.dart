@@ -39,9 +39,12 @@ void main() {
     await tester.tap(find.text('Select'));
     await tester.pumpAndSettle();
 
-    expect(controller.composer.selection!.isCollapsed, isFalse);
+    final sel = controller.composer.selection!;
+    expect(sel.isCollapsed, isFalse);
+    final base = (sel.base.nodePosition as TextNodePosition).offset;
+    final ext = (sel.extent.nodePosition as TextNodePosition).offset;
+    expect('hello world'.substring(base, ext), 'hello');
     final state = tester.state<EditableTextState>(find.byType(EditableText));
-    expect(state.textEditingValue.selection.textInside('hello world'), 'hello');
     expect(
       state.contextMenuButtonItems.map((i) => i.type),
       containsAll([ContextMenuButtonType.cut, ContextMenuButtonType.copy]),
