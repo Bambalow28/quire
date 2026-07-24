@@ -72,6 +72,19 @@ class QuireEditor extends StatefulWidget {
   State<QuireEditor> createState() => _QuireEditorState();
 }
 
+// ponytail: soft-keyboard backspace sentinel. An iOS/Android soft keyboard
+// sends no deletion delta (and no key event) when the field it's editing is
+// already empty, so backspace-at-start-of-empty-paragraph is otherwise
+// unreachable on touch. Fix: when a text node's model is empty, the field
+// shows a single zero-width space (caret after it) instead of literally
+// nothing, so a soft-keyboard backspace has something to delete and a real
+// delta to observe. The sentinel is a field-level trick only — it is
+// stripped before ever touching the model (`_stripSentinel`) and the model
+// never sees or persists it. Real fix: an editor-level `DeltaTextInputClient`
+// that sees the IME's actual delete requests instead of relying on text
+// diffs (see the physical-key-binding comment below for the same tradeoff).
+const _emptyNodeSentinel = '​';
+
 class _QuireEditorState extends State<QuireEditor> {
   final Map<String, NodeTextController> _controllers = {};
   final Map<String, FocusNode> _focusNodes = {};
@@ -354,7 +367,13 @@ class _QuireEditorState extends State<QuireEditor> {
           renderEditable.localToGlobal(Offset.zero) & renderEditable.size;
       if (!rect.contains(globalPosition)) continue;
       final position = renderEditable.getPositionForPoint(globalPosition);
-      return DocumentPosition(node.id, TextNodePosition(position.offset));
+      // Clamp into the model's own length — an empty node's field carries
+      // the sentinel (see `_emptyNodeSentinel`) and can report an offset the
+      // (empty) model has no such position for.
+      return DocumentPosition(
+        node.id,
+        TextNodePosition(position.offset.clamp(0, node.text.text.length)),
+      );
     }
     // Between two nodes (or past the last one): fall back to the vertically
     // nearest node, so a drag doesn't freeze whenever it crosses a gap.
@@ -597,24 +616,25 @@ class _QuireEditorState extends State<QuireEditor> {
     final selectionExtentId = composerSelection?.extent.nodeId;
     for (final (node, controller) in _pairs) {
       final modelText = node.text.text;
+      final fieldText = _fieldTextFor(modelText);
       final targetsThisNode =
           selectionBaseId == node.id && selectionExtentId == node.id;
 
-      if (controller.text != modelText) {
+      if (controller.text != fieldText) {
         final selection = targetsThisNode
-            ? _textSelectionFrom(composerSelection)
+            ? _textSelectionFrom(composerSelection, modelText)
             : TextSelection.collapsed(
                 offset: controller.selection.baseOffset.clamp(
                   0,
-                  modelText.length,
+                  fieldText.length,
                 ),
               );
         controller.value = TextEditingValue(
-          text: modelText,
+          text: fieldText,
           selection: selection,
         );
       } else if (targetsThisNode) {
-        final selection = _textSelectionFrom(composerSelection);
+        final selection = _textSelectionFrom(composerSelection, modelText);
         if (selection != controller.selection) {
           controller.selection = selection;
         }
@@ -624,14 +644,35 @@ class _QuireEditorState extends State<QuireEditor> {
     _syncing = false;
   }
 
-  TextSelection _textSelectionFrom(DocumentSelection? selection) {
+  /// The text a node's field should show — a single zero-width-space
+  /// sentinel in place of an empty model string (see `_emptyNodeSentinel`),
+  /// so the field always has something a soft keyboard can delete.
+  String _fieldTextFor(String modelText) =>
+      modelText.isEmpty ? _emptyNodeSentinel : modelText;
+
+  /// Undoes [_fieldTextFor] — the model must never see the sentinel. Strips
+  /// only a *leading* sentinel, since typing after it (the normal case once
+  /// an empty node stops being empty) leaves it at the front of the field's
+  /// text: e.g. "​hi" (sentinel + "hi") after typing "hi" into an empty node.
+  String _stripSentinel(String fieldText) =>
+      fieldText.startsWith(_emptyNodeSentinel)
+      ? fieldText.substring(_emptyNodeSentinel.length)
+      : fieldText;
+
+  TextSelection _textSelectionFrom(
+    DocumentSelection? selection,
+    String modelText,
+  ) {
     if (selection == null) return const TextSelection.collapsed(offset: 0);
     final base = selection.base.nodePosition;
     final extent = selection.extent.nodePosition;
     if (base is TextNodePosition && extent is TextNodePosition) {
+      // An empty model has exactly one valid field position: right after the
+      // sentinel.
+      final fieldLength = modelText.isEmpty ? _emptyNodeSentinel.length : null;
       return TextSelection(
-        baseOffset: base.offset,
-        extentOffset: extent.offset,
+        baseOffset: fieldLength ?? base.offset,
+        extentOffset: fieldLength ?? extent.offset,
       );
     }
     return const TextSelection.collapsed(offset: 0);
@@ -660,7 +701,25 @@ class _QuireEditorState extends State<QuireEditor> {
     if (controller == null) return;
 
     final oldText = controller.attributedText.text;
-    final newText = controller.text;
+    final rawNewText = controller.text;
+
+    // The sentinel itself was deleted (field went from '​' to truly
+    // empty) while the model was already empty — a soft keyboard can only
+    // express "backspace at the start of an empty paragraph" this way. Route
+    // it through the same request the physical-key binding uses.
+    if (oldText.isEmpty && rawNewText.isEmpty) {
+      // Deferred to a microtask: merging synchronously here could delete
+      // this very node's own NodeTextController while it's still
+      // mid-notifyListeners (this callback IS that notification) —
+      // `_syncControllers` disposing it then would violate ChangeNotifier's
+      // own reentrancy guard.
+      scheduleMicrotask(() {
+        if (!mounted) return;
+        widget.controller.mergeWithPrevious(nodeId);
+      });
+      return;
+    }
+    final newText = _stripSentinel(rawNewText);
 
     if (oldText != newText) {
       final prefixLen = _commonPrefixLength(oldText, newText);
@@ -733,12 +792,20 @@ class _QuireEditorState extends State<QuireEditor> {
 
     final selection = controller.selection;
     if (!selection.isValid) return;
+    // Field offsets, clamped into the model's own length — with the
+    // sentinel in place, an empty node's field selection sits at 0 or 1
+    // (either side of the zero-width space) while the only valid model
+    // offset is 0.
+    final modelLength = oldText.length;
     widget.controller.changeSelection(
       DocumentSelection(
-        base: DocumentPosition(nodeId, TextNodePosition(selection.baseOffset)),
+        base: DocumentPosition(
+          nodeId,
+          TextNodePosition(selection.baseOffset.clamp(0, modelLength)),
+        ),
         extent: DocumentPosition(
           nodeId,
-          TextNodePosition(selection.extentOffset),
+          TextNodePosition(selection.extentOffset.clamp(0, modelLength)),
         ),
       ),
     );

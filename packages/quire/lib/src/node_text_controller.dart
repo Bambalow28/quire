@@ -29,7 +29,13 @@ class NodeTextController extends TextEditingController {
   }) {
     final spans = _attributedText.spans;
     if (spans.isEmpty || _attributedText.text.isEmpty) {
-      return TextSpan(style: style, text: _attributedText.text);
+      // Render the field's own text (`text`, from the base
+      // TextEditingController), not the model's — they can diverge by the
+      // empty-node zero-width-space sentinel the editor uses for
+      // soft-keyboard backspace (see quire_editor.dart), and EditableText
+      // requires the built TextSpan's plain text to match `value.text`
+      // exactly.
+      return TextSpan(style: style, text: text);
     }
 
     // Collect every span boundary as a cut point, so each run between two

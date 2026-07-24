@@ -12,7 +12,9 @@ void main() {
       ),
     );
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+      MaterialApp(
+        home: Scaffold(body: QuireEditor(controller: controller)),
+      ),
     );
     await tester.pumpAndSettle();
 

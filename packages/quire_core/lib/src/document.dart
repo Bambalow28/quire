@@ -84,6 +84,31 @@ class MutableDocument {
     return ordered[index + 1];
   }
 
+  /// The node immediately after [id] within [id]'s own container (the
+  /// top-level list, or the table cell it lives in) — unlike [getNodeAfter],
+  /// this never steps into a *following* node's own nested content (e.g. the
+  /// first cell of a table that comes right after [id]).
+  DocumentNode? getNodeAfterInContainer(String id) {
+    final container = _containerOf[id];
+    if (container == null) return null;
+    final index = container.indexWhere((n) => n.id == id);
+    if (index < 0 || index >= container.length - 1) return null;
+    return container[index + 1];
+  }
+
+  /// The node immediately before [id] within [id]'s own container, mirroring
+  /// [getNodeAfterInContainer] — unlike [getNodeBefore], this never dives
+  /// into a *preceding* node's own nested content (e.g. the last cell of a
+  /// table that comes right before [id]), so "the sibling right above this
+  /// one" means an actual sibling, not a document-order predecessor.
+  DocumentNode? getNodeBeforeInContainer(String id) {
+    final container = _containerOf[id];
+    if (container == null) return null;
+    final index = container.indexWhere((n) => n.id == id);
+    if (index <= 0) return null;
+    return container[index - 1];
+  }
+
   /// Inserts [node] at top-level list index [index]. Only meaningful for
   /// top-level nodes — nested nodes are always inserted relative to a
   /// sibling id via [insertNodeAfter]/[insertNodeBefore].

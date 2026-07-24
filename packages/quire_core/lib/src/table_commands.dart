@@ -51,11 +51,26 @@ class _InsertTableCommand extends EditCommand {
     } else {
       context.document.insertNodeAt(context.document.nodes.length, table);
     }
+    final changedIds = [table.id];
+
+    // Same trailing-paragraph guarantee as a non-text InsertNodeRequest, but
+    // the caret still lands in the table's first cell — not the paragraph —
+    // matching today's behaviour.
+    final next = context.document.getNodeAfterInContainer(table.id);
+    if (next is! TextNode) {
+      final paragraph = TextNode(
+        id: generateNodeId(),
+        text: AttributedText(''),
+      );
+      context.document.insertNodeAfter(table.id, paragraph);
+      changedIds.add(paragraph.id);
+    }
+
     final firstNode = table.rows.first.cells.first.nodes.first;
     context.composer.selection = DocumentSelection.collapsed(
       DocumentPosition(firstNode.id, const TextNodePosition(0)),
     );
-    executor.emit(DocumentEdited([table.id]));
+    executor.emit(DocumentEdited(changedIds));
     executor.emit(SelectionChanged());
   }
 }

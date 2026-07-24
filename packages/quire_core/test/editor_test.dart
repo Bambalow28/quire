@@ -211,7 +211,18 @@ void main() {
     editor.execute([
       InsertNodeRequest(HorizontalRuleNode(id: 'hr'), afterNodeId: 'a'),
     ]);
-    expect(doc.nodes.map((n) => n.id), ['a', 'hr']);
+    expect(doc.nodes.map((n) => n.id).take(2), ['a', 'hr']);
+    // A non-text block gets a trailing empty paragraph so there's somewhere
+    // to type next, with the caret landing in it.
+    expect(doc.nodes.length, 3);
+    final trailing = doc.nodes.last as TextNode;
+    expect(trailing.text.text, isEmpty);
+    expect(
+      composer.selection,
+      DocumentSelection.collapsed(
+        DocumentPosition(trailing.id, const TextNodePosition(0)),
+      ),
+    );
 
     editor.execute([DeleteNodeRequest('hr')]);
     expect(doc.getNodeById('hr'), isNull);

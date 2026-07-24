@@ -27,9 +27,7 @@ void main() {
 
     final editorRect = tester.getRect(find.byType(QuireEditor));
     // Near the bottom of the editor area — far below the single empty line.
-    await tester.tapAt(
-      Offset(editorRect.center.dx, editorRect.bottom - 20),
-    );
+    await tester.tapAt(Offset(editorRect.center.dx, editorRect.bottom - 20));
     await tester.pumpAndSettle();
 
     final field = tester.widget<EditableText>(find.byType(EditableText));

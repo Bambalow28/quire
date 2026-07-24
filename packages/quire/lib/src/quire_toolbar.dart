@@ -140,6 +140,15 @@ class QuireToolbar extends StatelessWidget {
                   controller: controller,
                   tableId: tableCell.table.id,
                 ),
+              // Unfocuses whatever holds focus (which may not be one of the
+              // editor's own nodes — a host title field, say) without
+              // touching the composer's selection, so tapping back in
+              // returns the caret to where it was.
+              IconButton(
+                tooltip: 'Hide keyboard',
+                icon: const Icon(Icons.keyboard_hide),
+                onPressed: () => FocusManager.instance.primaryFocus?.unfocus(),
+              ),
             ],
           ),
         );

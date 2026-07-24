@@ -421,15 +421,35 @@ class _InsertNodeCommand extends EditCommand {
 
   @override
   void execute(EditContext context, CommandExecutor executor) {
+    final document = context.document;
     if (request.afterNodeId != null) {
-      context.document.insertNodeAfter(request.afterNodeId!, request.node);
+      document.insertNodeAfter(request.afterNodeId!, request.node);
     } else {
-      context.document.insertNodeAt(
-        context.document.nodes.length,
-        request.node,
-      );
+      document.insertNodeAt(document.nodes.length, request.node);
     }
-    executor.emit(DocumentEdited([request.node.id]));
+    final changedIds = [request.node.id];
+
+    // A non-text block (image, rule) needs somewhere for the caret to land
+    // next — add a trailing empty paragraph unless one is already there, and
+    // put the caret in it either way.
+    if (request.node is! TextNode) {
+      var next = document.getNodeAfterInContainer(request.node.id);
+      if (next is! TextNode) {
+        final paragraph = TextNode(
+          id: generateNodeId(),
+          text: AttributedText(''),
+        );
+        document.insertNodeAfter(request.node.id, paragraph);
+        changedIds.add(paragraph.id);
+        next = paragraph;
+      }
+      context.composer.selection = DocumentSelection.collapsed(
+        DocumentPosition(next.id, const TextNodePosition(0)),
+      );
+      executor.emit(SelectionChanged());
+    }
+
+    executor.emit(DocumentEdited(changedIds));
   }
 }
 
@@ -477,7 +497,10 @@ class _MergeWithPreviousNodeCommand extends EditCommand {
     final document = context.document;
     final node = document.getNodeById(request.nodeId);
     if (node == null) return;
-    final previous = document.getNodeBefore(request.nodeId);
+    // A sibling in [node]'s own container, not `getNodeBefore`'s document-
+    // order predecessor — the latter would dive into a preceding table's
+    // last cell instead of treating the table itself as "the node above".
+    final previous = document.getNodeBeforeInContainer(request.nodeId);
     if (previous == null) return;
 
     if (previous is TextNode && node is TextNode) {
