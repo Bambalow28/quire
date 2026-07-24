@@ -76,6 +76,11 @@ class _QuireEditorState extends State<QuireEditor> {
   final Map<String, NodeTextController> _controllers = {};
   final Map<String, FocusNode> _focusNodes = {};
   final Map<String, GlobalKey<EditableTextState>> _editableKeys = {};
+
+  /// Text nodes paired with their controller, in document order, rebuilt by
+  /// [_syncControllers]. Everything that walks the document per frame reads
+  /// this instead of looking each controller up by node id.
+  final List<(TextNode, NodeTextController)> _pairs = [];
   final GlobalKey _editorKey = GlobalKey();
   final ScrollController _scrollController = ScrollController();
   bool _syncing = false;
@@ -468,6 +473,13 @@ class _QuireEditorState extends State<QuireEditor> {
 
       _editableKeys[node.id] = GlobalKey<EditableTextState>();
     }
+
+    _pairs.clear();
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
+      if (node is! TextNode) continue;
+      final controller = _controllers[node.id];
+      if (controller != null) _pairs.add((node, controller));
+    }
   }
 
   /// Pushes the model's [AttributedText] into each node's controller. Text
@@ -478,16 +490,17 @@ class _QuireEditorState extends State<QuireEditor> {
   void _pushModelToControllers() {
     _syncing = true;
     final composerSelection = widget.controller.composer.selection;
-    for (final node in widget.controller.document.nodesInDocumentOrder) {
-      if (node is! TextNode) continue;
-      final controller = _controllers[node.id];
-      if (controller == null) continue;
-
+    // Read the selection's node ids ONCE, outside the loop. Leaving
+    // `composerSelection!.base` inside a `&&` here crashed release (AOT)
+    // builds with a null dereference: the field read is loop-invariant, and
+    // hoisting it out of the loop loses the null guard. Debug/JIT never
+    // optimises it, which is why only release builds died.
+    final selectionBaseId = composerSelection?.base.nodeId;
+    final selectionExtentId = composerSelection?.extent.nodeId;
+    for (final (node, controller) in _pairs) {
       final modelText = node.text.text;
       final targetsThisNode =
-          composerSelection != null &&
-          composerSelection.base.nodeId == node.id &&
-          composerSelection.extent.nodeId == node.id;
+          selectionBaseId == node.id && selectionExtentId == node.id;
 
       if (controller.text != modelText) {
         final selection = targetsThisNode
@@ -513,7 +526,8 @@ class _QuireEditorState extends State<QuireEditor> {
     _syncing = false;
   }
 
-  TextSelection _textSelectionFrom(DocumentSelection selection) {
+  TextSelection _textSelectionFrom(DocumentSelection? selection) {
+    if (selection == null) return const TextSelection.collapsed(offset: 0);
     final base = selection.base.nodePosition;
     final extent = selection.extent.nodePosition;
     if (base is TextNodePosition && extent is TextNodePosition) {
