@@ -2,13 +2,15 @@ name: quire_markdown
 description: Converts Markdown text into Quire documents (and back).
 version: 0.1.0
 publish_to: none
+homepage: https://github.com/Bambalow28/quire/tree/main/packages/quire_markdown
+repository: https://github.com/Bambalow28/quire
+issue_tracker: https://github.com/Bambalow28/quire/issues
 
 environment:
   sdk: ^3.9.0
 
 dependencies:
-  quire_core:
-    path: ../quire_core
+  quire_core: ^0.1.0
 
 dev_dependencies:
   test: ^1.25.0
