@@ -1,6 +1,9 @@
 name: quire_core
 description: Pure-Dart document model and edit pipeline for the Quire rich text editor.
 version: 0.1.0
+homepage: https://github.com/Bambalow28/quire/tree/main/packages/quire_core
+repository: https://github.com/Bambalow28/quire
+issue_tracker: https://github.com/Bambalow28/quire/issues
 publish_to: none
 
 environment:

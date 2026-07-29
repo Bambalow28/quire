@@ -4,7 +4,7 @@ import 'nodes.dart';
 import 'selection.dart';
 
 /// Restores the document and selection to a prior snapshot. Only issued
-/// internally by [EditHistory.undo]/[redo], but still flows through the
+/// internally by [EditHistory.undo]/[EditHistory.redo], but still flows through the
 /// normal [Editor.execute] funnel so listeners are notified as usual.
 class RestoreSnapshotRequest extends EditRequest {
   RestoreSnapshotRequest(this.documentJson, this.selectionJson);
