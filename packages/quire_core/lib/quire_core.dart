@@ -2,6 +2,7 @@
 library;
 
 export 'src/attributed_text.dart';
+export 'src/clipboard.dart';
 export 'src/commands.dart';
 export 'src/document.dart';
 export 'src/editor.dart';

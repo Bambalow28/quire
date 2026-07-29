@@ -7,6 +7,10 @@ const _italicAttribution = Attribution('italic');
 const _underlineAttribution = Attribution('underline');
 const _strikethroughAttribution = Attribution('strikethrough');
 
+/// A single find match: the range `[start, end)` of a query hit within one
+/// [TextNode]'s text.
+typedef FindMatch = ({String nodeId, int start, int end});
+
 /// Owns the document/composer/editor/history and is the single place the
 /// widget layer talks to the model. Every mutation goes through
 /// [EditHistory.execute] (never the document directly), so undo/redo stay
@@ -99,14 +103,42 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     }
   }
 
-  void setBlockType(String blockType) {
+  /// Whether the focused node already carries [blockType] — what makes a
+  /// toolbar button light up. [setBlockType] toggles on the same condition,
+  /// so "lit" and "pressing this turns it off" can't drift apart.
+  bool isBlockType(String blockType) => focusedTextNode?.blockType == blockType;
+
+  /// Sets [blockType] outright. For a control that *names* the state it wants
+  /// — the text-size menu — where pressing the current choice again should do
+  /// nothing rather than undo it.
+  void applyBlockType(String blockType) {
     if (composer.selection == null) return;
     history.execute([ChangeBlockTypeRequest(blockType)]);
   }
 
+  /// Applies [blockType] to the selection, or reverts it to a plain paragraph
+  /// when it's already active — pressing a lit block button turns it off.
+  /// Insertions (image, table) aren't toggles and don't come through here.
+  void setBlockType(String blockType) =>
+      applyBlockType(isBlockType(blockType) ? 'paragraph' : blockType);
+
   void changeIndent(int delta) {
     if (composer.selection == null) return;
     history.execute([ChangeIndentRequest(delta)]);
+  }
+
+  /// Whether the focused node's alignment is already [align] — what makes an
+  /// alignment button light up, mirroring [isBlockType].
+  bool isTextAlign(String align) => focusedTextNode?.textAlign == align;
+
+  void changeTextAlign(String align) {
+    if (composer.selection == null) return;
+    history.execute([ChangeTextAlignRequest(align)]);
+  }
+
+  void changeLineSpacing(double spacing) {
+    if (composer.selection == null) return;
+    history.execute([ChangeLineSpacingRequest(spacing)]);
   }
 
   void undo() => history.undo();
@@ -398,6 +430,135 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     focusNode(firstNode.id);
   }
 
+  // --- Find & replace -------------------------------------------------
+
+  bool findBarOpen = false;
+  String? findQuery;
+  List<FindMatch> matches = [];
+  int currentMatchIndex = -1;
+
+  void openFind() {
+    findBarOpen = true;
+    notifyListeners();
+  }
+
+  void closeFind() {
+    findBarOpen = false;
+    findQuery = null;
+    matches = [];
+    currentMatchIndex = -1;
+    notifyListeners();
+  }
+
+  /// Recomputes [matches] for [query] (case-insensitive) by scanning every
+  /// text node in document order (including table cells), and selects the
+  /// first match if any.
+  void find(String query) {
+    findQuery = query;
+    matches = _findMatches(query);
+    currentMatchIndex = matches.isEmpty ? -1 : 0;
+    _selectCurrentMatch();
+    notifyListeners();
+  }
+
+  List<FindMatch> _findMatches(String query) {
+    if (query.isEmpty) return [];
+    final lowerQuery = query.toLowerCase();
+    final result = <FindMatch>[];
+    for (final node in document.nodesInDocumentOrder) {
+      if (node is! TextNode) continue;
+      final text = node.text.text.toLowerCase();
+      var searchStart = 0;
+      while (true) {
+        final index = text.indexOf(lowerQuery, searchStart);
+        if (index < 0) break;
+        result.add((
+          nodeId: node.id,
+          start: index,
+          end: index + query.length,
+        ));
+        searchStart = index + query.length;
+      }
+    }
+    return result;
+  }
+
+  void _selectCurrentMatch() {
+    if (currentMatchIndex < 0 || currentMatchIndex >= matches.length) return;
+    final match = matches[currentMatchIndex];
+    changeSelection(
+      DocumentSelection(
+        base: DocumentPosition(match.nodeId, TextNodePosition(match.start)),
+        extent: DocumentPosition(match.nodeId, TextNodePosition(match.end)),
+      ),
+    );
+    requestFocus(match.nodeId);
+  }
+
+  void findNext() {
+    if (matches.isEmpty) return;
+    currentMatchIndex = (currentMatchIndex + 1) % matches.length;
+    _selectCurrentMatch();
+    notifyListeners();
+  }
+
+  void findPrevious() {
+    if (matches.isEmpty) return;
+    currentMatchIndex =
+        (currentMatchIndex - 1 + matches.length) % matches.length;
+    _selectCurrentMatch();
+    notifyListeners();
+  }
+
+  /// Replaces just the current match, then re-runs [find] (offsets shift
+  /// after any edit, so matches are recomputed rather than patched by hand),
+  /// landing on the match that took its place — or the last one, if it was
+  /// the final match.
+  void replaceCurrent(String replacement) {
+    if (currentMatchIndex < 0 || currentMatchIndex >= matches.length) return;
+    final match = matches[currentMatchIndex];
+    changeSelection(
+      DocumentSelection(
+        base: DocumentPosition(match.nodeId, TextNodePosition(match.start)),
+        extent: DocumentPosition(match.nodeId, TextNodePosition(match.end)),
+      ),
+    );
+    replaceSelectionWithText(replacement);
+    final query = findQuery;
+    if (query == null) return;
+    matches = _findMatches(query);
+    currentMatchIndex = matches.isEmpty
+        ? -1
+        : currentMatchIndex.clamp(0, matches.length - 1);
+    _selectCurrentMatch();
+    notifyListeners();
+  }
+
+  /// Replaces every existing match in one pass, in reverse document order —
+  /// not by looping [replaceCurrent] and re-finding, because if [replacement]
+  /// itself contains [query] (e.g. find "Bob", replace "Bobby"), a re-find
+  /// after each replacement matches the text it just inserted and never
+  /// terminates. Reverse order means every match's offset, computed once
+  /// up front, is still valid when it's replaced — nothing before it in its
+  /// node has moved yet.
+  void replaceAll(String query, String replacement) {
+    final toReplace = _findMatches(query);
+    for (final match in toReplace.reversed) {
+      changeSelection(
+        DocumentSelection(
+          base: DocumentPosition(match.nodeId, TextNodePosition(match.start)),
+          extent: DocumentPosition(match.nodeId, TextNodePosition(match.end)),
+        ),
+      );
+      replaceSelectionWithText(replacement);
+    }
+    findQuery = query;
+    matches = _findMatches(query);
+    currentMatchIndex = matches.isEmpty ? -1 : 0;
+    _selectCurrentMatch();
+    notifyListeners();
+  }
+
   void replaceText({
     required String nodeId,
     required int start,
@@ -461,6 +622,10 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     if (selection == null) return;
     final text = flattenSelectionText(document, selection);
     if (text.isEmpty) return;
+    QuireClipboard.instance.store(
+      text,
+      extractSelectionNodes(document, selection),
+    );
     await Clipboard.setData(ClipboardData(text: text));
   }
 
@@ -475,7 +640,28 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     final data = await Clipboard.getData('text/plain');
     final text = data?.text;
     if (text == null || text.isEmpty) return;
+
+    final richNodes = QuireClipboard.instance.richNodesFor(text);
+    if (richNodes != null && richNodes.isNotEmpty) {
+      replaceSelectionWithNodes(richNodes);
+      return;
+    }
+    // ponytail: the OS clipboard only round-trips plain text without a
+    // plugin, so content copied outside Quire (or since overwritten
+    // elsewhere) pastes unformatted. Ceiling: a clipboard plugin (e.g.
+    // super_clipboard) for cross-app text/html round-trip.
     replaceSelectionWithText(text);
+  }
+
+  /// Rich-paste counterpart to [replaceSelectionWithText]: replaces the
+  /// current selection with [nodes] (clipped [TextNode]s from an in-app
+  /// copy), preserving each node's inline attributions and block type.
+  void replaceSelectionWithNodes(List<TextNode> nodes) {
+    final selection = composer.selection;
+    if (selection == null || nodes.isEmpty) return;
+    if (!selection.isCollapsed) deleteSelection();
+    if (composer.selection == null) return;
+    history.execute([InsertRichContentRequest(nodes)]);
   }
 
   /// Replaces the current selection (deleting it first, if expanded) with

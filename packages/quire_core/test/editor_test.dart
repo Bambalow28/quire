@@ -203,6 +203,66 @@ void main() {
     },
   );
 
+  test(
+    'ChangeTextAlignRequest applies across the selection and undo restores it',
+    () {
+      final doc = MutableDocument(nodes: [_para('a', 'x'), _para('b', 'y')]);
+      final composer = DocumentComposer(
+        selection: DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('b', const TextNodePosition(1)),
+        ),
+      );
+      final editor = Editor(
+        doc,
+        composer,
+        requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+      );
+      final history = EditHistory(editor);
+
+      expect((doc.getNodeById('a') as TextNode).textAlign, 'left');
+
+      history.execute([ChangeTextAlignRequest('center')]);
+      expect((doc.getNodeById('a') as TextNode).textAlign, 'center');
+      expect((doc.getNodeById('b') as TextNode).textAlign, 'center');
+
+      history.undo();
+      expect((doc.getNodeById('a') as TextNode).textAlign, 'left');
+      expect((doc.getNodeById('b') as TextNode).textAlign, 'left');
+    },
+  );
+
+  test(
+    'ChangeLineSpacingRequest applies, clamps, and undo restores it',
+    () {
+      final doc = MutableDocument(nodes: [_para('a', 'x')]);
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(0)),
+        ),
+      );
+      final editor = Editor(
+        doc,
+        composer,
+        requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+      );
+      final history = EditHistory(editor);
+
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0);
+
+      history.execute([ChangeLineSpacingRequest(1.5)]);
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.5);
+
+      editor.execute([ChangeLineSpacingRequest(10.0)]);
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 2.5); // clamped
+      editor.execute([ChangeLineSpacingRequest(-1.0)]);
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0); // clamped
+
+      history.undo();
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0);
+    },
+  );
+
   test('InsertNodeRequest and DeleteNodeRequest', () {
     final doc = MutableDocument(nodes: [_para('a', 'x')]);
     final composer = DocumentComposer();
@@ -407,14 +467,72 @@ void main() {
     );
   });
 
-  test('MergeWithPreviousNodeRequest is a no-op on the first node', () {
-    final doc = MutableDocument(nodes: [_para('a', 'hello')]);
+  test(
+    'MergeWithPreviousNodeRequest is a no-op on a plain first paragraph',
+    () {
+      final doc = MutableDocument(nodes: [_para('a', 'hello')]);
+      final composer = DocumentComposer();
+      final editor = _editor(doc, composer);
+
+      editor.execute([MergeWithPreviousNodeRequest('a')]);
+
+      expect(doc.nodes.length, 1);
+      expect((doc.getNodeById('a') as TextNode).blockType, 'paragraph');
+    },
+  );
+
+  test('MergeWithPreviousNodeRequest on the first node drops its block type '
+      'instead of merging, since there is nothing to merge into', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para(
+          'a',
+          'buy milk',
+          metadata: {'blockType': 'listItemTask', 'checked': true},
+        ),
+      ],
+    );
     final composer = DocumentComposer();
     final editor = _editor(doc, composer);
 
     editor.execute([MergeWithPreviousNodeRequest('a')]);
 
-    expect(doc.nodes.length, 1);
+    final node = doc.getNodeById('a') as TextNode;
+    expect(node.blockType, 'paragraph');
+    // Same rule ChangeBlockTypeRequest already follows: leaving a task
+    // item drops the tick rather than letting it reappear silently.
+    expect(node.isChecked, isFalse);
+    expect(node.text.text, 'buy milk'); // text itself is untouched
+  });
+
+  test('MergeWithPreviousNodeRequest on an indented first node dedents once, '
+      'and only drops the block type once indent reaches zero', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para(
+          'a',
+          'nested',
+          metadata: {'blockType': 'listItemUnordered', 'indent': 2},
+        ),
+      ],
+    );
+    final composer = DocumentComposer();
+    final editor = _editor(doc, composer);
+
+    editor.execute([MergeWithPreviousNodeRequest('a')]);
+    var node = doc.getNodeById('a') as TextNode;
+    expect(node.indent, 1);
+    expect(node.blockType, 'listItemUnordered'); // one step at a time
+
+    editor.execute([MergeWithPreviousNodeRequest('a')]);
+    node = doc.getNodeById('a') as TextNode;
+    expect(node.indent, 0);
+    expect(node.blockType, 'listItemUnordered');
+
+    editor.execute([MergeWithPreviousNodeRequest('a')]);
+    node = doc.getNodeById('a') as TextNode;
+    expect(node.indent, 0);
+    expect(node.blockType, 'paragraph');
   });
 
   test('ToggleTaskCheckedRequest flips checked and undo restores it', () {

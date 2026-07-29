@@ -140,7 +140,20 @@ void main() {
       );
       await tester.pump();
 
-      await tester.tap(find.byTooltip('Insert table'));
+      // Table now lives in the toolbar's `+` panel, not the bar itself.
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byIcon(Icons.table_chart_outlined),
+        100,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.ensureVisible(find.byIcon(Icons.table_chart_outlined));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.table_chart_outlined));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Create'));
       await tester.pumpAndSettle();

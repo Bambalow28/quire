@@ -116,6 +116,8 @@ class TextNode extends DocumentNode {
   String get blockType => metadata['blockType'] as String? ?? 'paragraph';
   int get indent => metadata['indent'] as int? ?? 0;
   bool get isChecked => metadata['checked'] == true;
+  String get textAlign => metadata['textAlign'] as String? ?? 'left';
+  double get lineSpacing => (metadata['lineSpacing'] as num?)?.toDouble() ?? 1.0;
 
   @override
   String get type => 'text';

@@ -140,6 +140,41 @@ String flattenSelectionText(
   return buffer.toString();
 }
 
+/// Clips the [TextNode]s covered by [selection] to the selected range,
+/// preserving each node's `blockType`/metadata and inline attributions —
+/// the rich counterpart to [flattenSelectionText]. Non-text nodes are
+/// skipped, matching [flattenSelectionText]'s scope.
+List<TextNode> extractSelectionNodes(
+  MutableDocument document,
+  DocumentSelection selection,
+) {
+  final (startPos, endPos) = selection.normalize(document);
+  final startIndex = document.getNodeIndexById(startPos.nodeId);
+  final endIndex = document.getNodeIndexById(endPos.nodeId);
+  if (startIndex < 0 || endIndex < 0) return [];
+
+  final result = <TextNode>[];
+  for (var i = startIndex; i <= endIndex; i++) {
+    final node = document.getNodeAt(i);
+    if (node is! TextNode) continue;
+    final length = node.text.text.length;
+    final start = i == startIndex && startPos.nodePosition is TextNodePosition
+        ? (startPos.nodePosition as TextNodePosition).offset.clamp(0, length)
+        : 0;
+    final end = i == endIndex && endPos.nodePosition is TextNodePosition
+        ? (endPos.nodePosition as TextNodePosition).offset.clamp(0, length)
+        : length;
+    result.add(
+      TextNode(
+        id: node.id,
+        text: node.text.copyRange(start, end),
+        metadata: Map<String, Object?>.from(node.metadata),
+      ),
+    );
+  }
+  return result;
+}
+
 /// Holds the current selection and the styles armed for the next keystroke.
 /// Mutated only by [Editor].
 class DocumentComposer {

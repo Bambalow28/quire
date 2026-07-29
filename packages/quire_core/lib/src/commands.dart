@@ -66,6 +66,83 @@ class _InsertTextCommand extends EditCommand {
   }
 }
 
+// --- InsertRichContentRequest --------------------------------------------
+
+/// Inserts [nodes] (clipped [TextNode]s from [extractSelectionNodes]) at the
+/// current collapsed selection, splitting the target node the way
+/// [InsertNewlineRequest] does — the rich-paste counterpart to
+/// [InsertTextRequest]. A single-node paste merges straight into the target
+/// node's own formatting (inline paste); multiple nodes preserve each
+/// source node's `blockType`/metadata, splitting the target node's tail off
+/// into a new node after the pasted content.
+class InsertRichContentRequest extends EditRequest {
+  InsertRichContentRequest(this.nodes);
+  final List<TextNode> nodes;
+}
+
+class _InsertRichContentCommand extends EditCommand {
+  _InsertRichContentCommand(this.request);
+  final InsertRichContentRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final nodes = request.nodes;
+    if (nodes.isEmpty) return;
+    final selection = context.composer.selection;
+    if (selection == null || !selection.isCollapsed) return;
+    final position = selection.extent;
+    final document = context.document;
+    final node = document.getNodeById(position.nodeId);
+    if (node is! TextNode) return;
+    final nodePosition = position.nodePosition;
+    if (nodePosition is! TextNodePosition) return;
+    final offset = nodePosition.offset;
+    final left = node.text.copyRange(0, offset);
+    final right = node.text.copyRange(offset, node.text.text.length);
+
+    final changedIds = <String>[node.id];
+
+    if (nodes.length == 1) {
+      final merged = _concatText(left, nodes.first.text);
+      node.text = _concatText(merged, right);
+      context.composer.selection = DocumentSelection.collapsed(
+        DocumentPosition(node.id, TextNodePosition(merged.text.length)),
+      );
+    } else {
+      node.text = _concatText(left, nodes.first.text);
+      // The prefix now shares a line with the first pasted node — its
+      // block type wins for that line, the way the rest of the pasted
+      // nodes carry their own.
+      node.metadata = Map<String, Object?>.from(nodes.first.metadata);
+      var previousId = node.id;
+      for (var i = 1; i < nodes.length - 1; i++) {
+        final middle = TextNode(
+          id: generateNodeId(),
+          text: nodes[i].text,
+          metadata: Map<String, Object?>.from(nodes[i].metadata),
+        );
+        document.insertNodeAfter(previousId, middle);
+        changedIds.add(middle.id);
+        previousId = middle.id;
+      }
+      final last = nodes.last;
+      final lastNode = TextNode(
+        id: generateNodeId(),
+        text: _concatText(last.text, right),
+        metadata: Map<String, Object?>.from(last.metadata),
+      );
+      document.insertNodeAfter(previousId, lastNode);
+      changedIds.add(lastNode.id);
+      context.composer.selection = DocumentSelection.collapsed(
+        DocumentPosition(lastNode.id, TextNodePosition(last.text.text.length)),
+      );
+    }
+
+    executor.emit(DocumentEdited(changedIds));
+    executor.emit(SelectionChanged());
+  }
+}
+
 // --- DeleteSelectionRequest --------------------------------------------
 
 class DeleteSelectionRequest extends EditRequest {}
@@ -376,6 +453,16 @@ Iterable<TextNode> _textNodesInSelection(EditContext context) sync* {
   }
 }
 
+/// [node]'s metadata with `blockType` set to [blockType]. `checked` only
+/// means anything on a task item, so it's dropped on the way out — a
+/// reverted node comes back as a plain paragraph rather than one carrying an
+/// invisible tick that reappears if the type is applied again.
+Map<String, Object?> _metadataForBlockType(TextNode node, String blockType) {
+  final metadata = {...node.metadata, 'blockType': blockType};
+  if (blockType != 'listItemTask') metadata.remove('checked');
+  return metadata;
+}
+
 class _ChangeBlockTypeCommand extends EditCommand {
   _ChangeBlockTypeCommand(this.request);
   final ChangeBlockTypeRequest request;
@@ -384,7 +471,7 @@ class _ChangeBlockTypeCommand extends EditCommand {
   void execute(EditContext context, CommandExecutor executor) {
     final changedIds = <String>[];
     for (final node in _textNodesInSelection(context)) {
-      node.metadata = {...node.metadata, 'blockType': request.blockType};
+      node.metadata = _metadataForBlockType(node, request.blockType);
       changedIds.add(node.id);
     }
     if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
@@ -401,6 +488,51 @@ class _ChangeIndentCommand extends EditCommand {
     for (final node in _textNodesInSelection(context)) {
       final newIndent = (node.indent + request.delta).clamp(0, 8);
       node.metadata = {...node.metadata, 'indent': newIndent};
+      changedIds.add(node.id);
+    }
+    if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
+  }
+}
+
+// --- ChangeTextAlignRequest ----------------------------------------------
+
+class ChangeTextAlignRequest extends EditRequest {
+  ChangeTextAlignRequest(this.align);
+  final String align;
+}
+
+class _ChangeTextAlignCommand extends EditCommand {
+  _ChangeTextAlignCommand(this.request);
+  final ChangeTextAlignRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final changedIds = <String>[];
+    for (final node in _textNodesInSelection(context)) {
+      node.metadata = {...node.metadata, 'textAlign': request.align};
+      changedIds.add(node.id);
+    }
+    if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
+  }
+}
+
+// --- ChangeLineSpacingRequest ----------------------------------------------
+
+class ChangeLineSpacingRequest extends EditRequest {
+  ChangeLineSpacingRequest(this.spacing);
+  final double spacing;
+}
+
+class _ChangeLineSpacingCommand extends EditCommand {
+  _ChangeLineSpacingCommand(this.request);
+  final ChangeLineSpacingRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final changedIds = <String>[];
+    final clamped = request.spacing.clamp(1.0, 2.5);
+    for (final node in _textNodesInSelection(context)) {
+      node.metadata = {...node.metadata, 'lineSpacing': clamped};
       changedIds.add(node.id);
     }
     if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
@@ -482,7 +614,16 @@ class _DeleteNodeCommand extends EditCommand {
 /// it. If the previous node is a [TextNode], its text is joined with the
 /// (only-if-also-text) target node's text and the caret lands at the join
 /// point; otherwise the previous node is simply deleted and the caret lands
-/// at the start of [nodeId]. No-op if [nodeId] is the first node.
+/// at the start of [nodeId].
+///
+/// If [nodeId] is the first node in its container, there is nothing to merge
+/// into — backspace there instead unwinds the node's own formatting one step
+/// at a time (dedent, then drop the block type back to a plain paragraph).
+/// That's what merging already does for every *other* line: the merged-away
+/// node's formatting doesn't survive the join, so a list/heading item loses
+/// it the moment it's backspaced into the line above. The first line has no
+/// line above to fall into, so without this it would otherwise take a trip
+/// back to the toolbar to clear the same formatting.
 class MergeWithPreviousNodeRequest extends EditRequest {
   MergeWithPreviousNodeRequest(this.nodeId);
   final String nodeId;
@@ -501,7 +642,18 @@ class _MergeWithPreviousNodeCommand extends EditCommand {
     // order predecessor — the latter would dive into a preceding table's
     // last cell instead of treating the table itself as "the node above".
     final previous = document.getNodeBeforeInContainer(request.nodeId);
-    if (previous == null) return;
+    if (previous == null) {
+      if (node is TextNode) {
+        if (node.indent > 0) {
+          node.metadata = {...node.metadata, 'indent': node.indent - 1};
+          executor.emit(DocumentEdited([node.id]));
+        } else if (node.blockType != 'paragraph') {
+          node.metadata = _metadataForBlockType(node, 'paragraph');
+          executor.emit(DocumentEdited([node.id]));
+        }
+      }
+      return;
+    }
 
     if (previous is TextNode && node is TextNode) {
       final joinOffset = previous.text.text.length;
@@ -545,6 +697,9 @@ class _ToggleTaskCheckedCommand extends EditCommand {
 final List<EditRequestHandler> defaultRequestHandlers = [
   (request) =>
       request is InsertTextRequest ? _InsertTextCommand(request) : null,
+  (request) => request is InsertRichContentRequest
+      ? _InsertRichContentCommand(request)
+      : null,
   (request) =>
       request is DeleteSelectionRequest ? _DeleteSelectionCommand() : null,
   (request) => request is InsertNewlineRequest ? _InsertNewlineCommand() : null,
@@ -559,6 +714,12 @@ final List<EditRequestHandler> defaultRequestHandlers = [
       : null,
   (request) =>
       request is ChangeIndentRequest ? _ChangeIndentCommand(request) : null,
+  (request) => request is ChangeTextAlignRequest
+      ? _ChangeTextAlignCommand(request)
+      : null,
+  (request) => request is ChangeLineSpacingRequest
+      ? _ChangeLineSpacingCommand(request)
+      : null,
   (request) =>
       request is InsertNodeRequest ? _InsertNodeCommand(request) : null,
   (request) =>

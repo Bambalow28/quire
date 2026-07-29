@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart'
     show cupertinoTextSelectionHandleControls;
@@ -1091,6 +1092,14 @@ class _QuireEditorState extends State<QuireEditor> {
         // TextField, which follows the theme), so an iOS keyboard would
         // come up light inside a dark app.
         keyboardAppearance: theme.brightness,
+        // Flutter's own predictive-text bar has no completions behind it —
+        // it just reserves the row and leaves it blank. `enableSuggestions`
+        // alone doesn't touch this: on iOS the QuickType bar is tied to
+        // autocorrect, not suggestions (Flutter's own doc comment on
+        // enableSuggestions says as much) — autocorrect is what actually
+        // removes the row instead of showing it empty.
+        enableSuggestions: false,
+        autocorrect: false,
         cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
         backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
         selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
@@ -1212,7 +1221,8 @@ class _QuireEditorState extends State<QuireEditor> {
   }
 
   TextStyle _styleFor(ThemeData theme, TextNode node) {
-    var base = theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16);
+    var base = (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+        .copyWith(height: node.lineSpacing);
     if (node.blockType == 'listItemTask' && node.isChecked) {
       base = base.copyWith(
         decoration: TextDecoration.lineThrough,
@@ -1242,7 +1252,7 @@ class _QuireEditorState extends State<QuireEditor> {
   }
 
   TextAlign _textAlignFor(TextNode node) {
-    switch (node.metadata['textAlign']) {
+    switch (node.textAlign) {
       case 'center':
         return TextAlign.center;
       case 'right':
@@ -1254,6 +1264,19 @@ class _QuireEditorState extends State<QuireEditor> {
     }
   }
 
+  /// Height of one line of [node]'s own text. Measured with a [TextPainter]
+  /// rather than derived from `fontSize`, because the real line box comes
+  /// from the font's metrics — and the font here is the host app's, not ours.
+  double _lineHeight(BuildContext context, TextNode node) {
+    final painter = TextPainter(
+      text: TextSpan(text: 'x', style: _styleFor(Theme.of(context), node)),
+      textDirection: Directionality.of(context),
+    )..layout();
+    final height = painter.height;
+    painter.dispose();
+    return height;
+  }
+
   /// The bullet/number sits beside its own `EditableText`, so it has to carry
   /// the node's text style itself — otherwise it renders at the default size
   /// and its baseline drifts off the line it labels.
@@ -1261,14 +1284,37 @@ class _QuireEditorState extends State<QuireEditor> {
     if (node.blockType == 'listItemTask') {
       return Padding(
         padding: const EdgeInsets.only(right: 4),
-        child: Checkbox(
-          value: node.isChecked,
-          visualDensity: VisualDensity.compact,
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          // canRequestFocus: false keeps the checkbox from stealing focus
-          // (and thus the keyboard) away from the node's text field.
-          focusNode: FocusNode(canRequestFocus: false),
-          onChanged: (_) => widget.controller.toggleTaskChecked(node.id),
+        // Sized to exactly one line of this node's own text, so the checkbox
+        // centres on the *first* line: the row is top-aligned, so a taller
+        // box would push the mark down past a one-line item's text, and on a
+        // wrapped item an unconstrained checkbox centres itself against the
+        // whole paragraph instead of the line it belongs to.
+        //
+        // Checkbox paints a fixed 18pt mark centred in whatever box it's
+        // given, so constraining the box is what moves the mark — the floor
+        // keeps that mark from clipping at very small text sizes.
+        child: SizedBox(
+          width: 24,
+          height: math.max(_lineHeight(context, node), 18),
+          // Scaled rather than resized: Checkbox paints a fixed 18pt mark, so
+          // this is the only way to shrink it — and because a transform is
+          // paint-time, the box it centres in is untouched.
+          child: Transform.scale(
+            scale: 0.8,
+            // Keeps the checkbox out of the focus tree so tapping it can't
+            // pull focus (and the keyboard) off the node's text field. This
+            // used to be a `FocusNode(canRequestFocus: false)` built inline,
+            // which minted — and leaked — a new node on every rebuild, so
+            // every keystroke re-attached it mid-frame.
+            child: ExcludeFocus(
+              child: Checkbox(
+                value: node.isChecked,
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                onChanged: (_) => widget.controller.toggleTaskChecked(node.id),
+              ),
+            ),
+          ),
         ),
       );
     }
