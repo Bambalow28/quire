@@ -1,0 +1,3 @@
+dependency_overrides:
+  quire_core:
+    path: ../../quire_core

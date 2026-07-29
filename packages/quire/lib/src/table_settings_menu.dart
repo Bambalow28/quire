@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 import 'quire_editor_controller.dart';
 
-/// The table-editing menu, shared by [quire_toolbar]'s table-settings button
-/// and each table's own settings button in [quire_editor] — one definition,
+/// The table-editing menu, shared by [QuireToolbar]'s table-settings button
+/// and each table's own settings button in [QuireEditor] — one definition,
 /// used both places.
 ///
 /// [tableId] is the table this menu belongs to. The caret-position actions
