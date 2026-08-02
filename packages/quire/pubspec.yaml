@@ -12,7 +12,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  quire_core: ^0.1.0
+  quire_core:
+    path: ../quire_core
 
 dev_dependencies:
   flutter_test:

@@ -10,7 +10,8 @@ environment:
   sdk: ^3.9.0
 
 dependencies:
-  quire_core: ^0.1.0
+  quire_core:
+    path: ../quire_core
 
 dev_dependencies:
   test: ^1.25.0
