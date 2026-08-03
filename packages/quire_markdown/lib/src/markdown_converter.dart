@@ -3,8 +3,8 @@ import 'package:quire_core/quire_core.dart';
 // ponytail: tables are out of scope (Quire's table model is a nested
 // row/cell grid; CommonMark tables are a GFM extension, not core Markdown).
 // [markdownToQuire] never produces a TableNode, and [quireToMarkdown] skips
-// any TableNode/ImageNode it encounters rather than throwing or guessing at
-// a textual representation.
+// any TableNode it encounters rather than throwing or guessing at a textual
+// representation.
 
 final _headingRegex = RegExp(r'^(#{1,6})\s+(.*)$');
 final _hrRegex = RegExp(r'^ {0,3}([-*_])(?: *\1){2,} *$');
@@ -139,18 +139,20 @@ MutableDocument? markdownToQuireOrNull(String markdown) {
 
 /// Converts a [MutableDocument] back into Markdown text.
 ///
-/// Only [TextNode] and [HorizontalRuleNode] are rendered — [ImageNode] and
-/// [TableNode] are out of scope (see the file-level comment) and are simply
+/// [TextNode], [HorizontalRuleNode], and [ImageNode] are rendered —
+/// [TableNode] is out of scope (see the file-level comment) and is simply
 /// skipped, never thrown on.
 String quireToMarkdown(MutableDocument doc) {
   final lines = <String>[];
   for (final node in doc.nodes) {
     if (node is HorizontalRuleNode) {
       lines.add('---');
+    } else if (node is ImageNode) {
+      lines.add('![${node.altText ?? ''}](${node.url})');
     } else if (node is TextNode) {
       lines.add(_lineFor(node));
     }
-    // ImageNode / TableNode: unsupported, skipped rather than guessed at.
+    // TableNode: unsupported (GFM extension, out of scope), skipped.
   }
   return lines.join('\n');
 }
@@ -261,7 +263,7 @@ List<_InlineSegment> _parseInline(String text) {
     }
 
     if (text[i] == '[') {
-      final closeBracket = text.indexOf(']', i + 1);
+      final closeBracket = _matchingCloseBracket(text, i + 1);
       if (closeBracket != -1 &&
           closeBracket + 1 < text.length &&
           text[closeBracket + 1] == '(') {
@@ -321,7 +323,13 @@ List<_InlineSegment> _parseInline(String text) {
     if (text[i] == '*' || text[i] == '_') {
       final marker = text[i];
       final end = text.indexOf(marker, i + 1);
-      if (end != -1 && end > i + 1) {
+      // CommonMark: `_` emphasis requires non-word-character flanking (no
+      // intraword matches like `foo_bar_baz`); `*` has no such restriction.
+      final flanked = end == -1 ||
+          marker != '_' ||
+          (!_isWordChar(i > 0 ? text[i - 1] : null) &&
+              !_isWordChar(end + 1 < text.length ? text[end + 1] : null));
+      if (end != -1 && end > i + 1 && flanked) {
         flushPlain();
         addWrapped(text.substring(i + 1, end), const Attribution('italic'));
         i = end + 1;
@@ -389,6 +397,24 @@ String _renderRun(String run, Set<Attribution> attrs) {
 
   return rendered;
 }
+
+/// Finds the `]` pairing with the `[` that opened at `start - 1`, tolerating
+/// nested `[...]` inside link text (e.g. `[a [b] c](url)`).
+int _matchingCloseBracket(String text, int start) {
+  var depth = 0;
+  for (var j = start; j < text.length; j++) {
+    if (text[j] == '[') {
+      depth++;
+    } else if (text[j] == ']') {
+      if (depth == 0) return j;
+      depth--;
+    }
+  }
+  return -1;
+}
+
+bool _isWordChar(String? c) =>
+    c != null && RegExp(r'[A-Za-z0-9_]').hasMatch(c);
 
 extension _FirstOrNull<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;

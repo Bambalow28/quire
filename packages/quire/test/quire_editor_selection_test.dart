@@ -234,6 +234,42 @@ void main() {
     },
   );
 
+  testWidgets(
+    'deleteSelection with a cross-node selection refocuses the surviving '
+    'node, not the deleted one',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+      // Focus starts in node 'b', the node the selection's extent will end
+      // up removed along with — proves focus is re-derived from the
+      // surviving selection afterward rather than left pointing at 'b'.
+      await tester.tap(find.byType(EditableText).at(1));
+      await tester.pumpAndSettle();
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('b', const TextNodePosition(6)),
+        ),
+      );
+      await tester.pump();
+
+      controller.deleteSelection();
+      await tester.pump();
+
+      expect(controller.document.nodes.length, 1);
+      final survivorId = controller.document.nodes.first.id;
+      expect(controller.focusedNodeId, survivorId);
+      expect(controller.focusedNodeId, isNot('b'));
+    },
+  );
+
   testWidgets('Cmd+A then Cmd+C puts the whole document\'s text on the '
       'clipboard', (tester) async {
     final controller = QuireEditorController(
@@ -288,6 +324,10 @@ void main() {
 
     final gesture = await tester.startGesture(start); // touch by default
     await tester.pump();
+    // Focus is deferred until the gesture is confirmed as a tap — right
+    // after pointer-down (before the move that turns this into a scroll)
+    // nothing should have been focused or popped a keyboard yet.
+    expect(controller.focusedNodeId, isNull);
     await gesture.moveTo(end);
     await tester.pump();
     await gesture.up();
@@ -295,6 +335,9 @@ void main() {
 
     final selection = controller.composer.selection;
     expect(selection == null || selection.isCollapsed, isTrue);
+    // A pure scroll never resolves into a tap, so it must never have
+    // requested focus on any node either.
+    expect(controller.focusedNodeId, isNull);
   });
 
   testWidgets('a long-press then drag selects across nodes by touch', (

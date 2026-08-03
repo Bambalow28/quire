@@ -188,6 +188,8 @@ class _DeleteSelectionCommand extends EditCommand {
             : (afterEnd != null ? _startOf(afterEnd) : null);
         if (landing != null) {
           context.composer.selection = DocumentSelection.collapsed(landing);
+        } else {
+          context.composer.selection = null;
         }
       }
     } else {
@@ -242,6 +244,8 @@ class _DeleteSelectionCommand extends EditCommand {
             : (afterEnd != null ? _startOf(afterEnd) : null);
         if (landing != null) {
           context.composer.selection = DocumentSelection.collapsed(landing);
+        } else {
+          context.composer.selection = null;
         }
       }
     }

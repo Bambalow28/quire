@@ -104,6 +104,30 @@ void main() {
       final doc = markdownToQuire('a *dangling bold');
       expect(textNodeAt(doc, 0).text.text, 'a *dangling bold');
     });
+
+    test('intraword underscore is not treated as emphasis', () {
+      final doc = markdownToQuire('foo_bar_baz');
+      final text = textNodeAt(doc, 0).text;
+      expect(text.text, 'foo_bar_baz');
+      expect(text.attributionsAt(4), isEmpty);
+    });
+
+    test('space-flanked underscore still italicizes', () {
+      final doc = markdownToQuire('text _emphasis_ text');
+      final text = textNodeAt(doc, 0).text;
+      expect(text.text, 'text emphasis text');
+      expect(text.attributionsAt(5), contains(const Attribution('italic')));
+    });
+
+    test('link text with one level of nested brackets', () {
+      final doc = markdownToQuire('[a [b] c](url)');
+      final text = textNodeAt(doc, 0).text;
+      expect(text.text, 'a [b] c');
+      expect(
+        text.attributionsAt(0),
+        contains(Attribution('link', value: {'url': 'url'})),
+      );
+    });
   });
 
   group('lists', () {
@@ -166,6 +190,30 @@ void main() {
       final doc = markdownToQuire('above\n---\nbelow');
       expect(doc.nodes, hasLength(3));
       expect(doc.nodes[1], isA<HorizontalRuleNode>());
+    });
+  });
+
+  group('image export', () {
+    test('ImageNode renders as markdown image syntax', () {
+      final doc = MutableDocument(
+        nodes: [
+          ImageNode(
+            id: 'a',
+            url: 'https://example.com/pic.png',
+            altText: 'a photo',
+          ),
+        ],
+      );
+      final markdown = quireToMarkdown(doc);
+      expect(markdown, '![a photo](https://example.com/pic.png)');
+    });
+
+    test('ImageNode without alt text renders empty alt', () {
+      final doc = MutableDocument(
+        nodes: [ImageNode(id: 'a', url: 'https://example.com/pic.png')],
+      );
+      final markdown = quireToMarkdown(doc);
+      expect(markdown, '![](https://example.com/pic.png)');
     });
   });
 

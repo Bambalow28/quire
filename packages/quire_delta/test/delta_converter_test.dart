@@ -272,6 +272,49 @@ void main() {
       expect(node.text.text, contains('not valid json'));
     });
 
+    test('divider embed becomes a HorizontalRuleNode', () {
+      final doc = deltaToQuire([
+        {
+          'insert': {'divider': 'hr'},
+        },
+        {'insert': '\n'},
+      ]);
+      expect(doc.nodes, hasLength(1));
+      expect(doc.nodes[0], isA<HorizontalRuleNode>());
+    });
+
+    test('image embed with alt attribute preserves it', () {
+      final doc = deltaToQuire([
+        {
+          'insert': {'image': '/local/photo.png'},
+          'attributes': {'alt': 'a scenic photo'},
+        },
+        {'insert': '\n'},
+      ]);
+      final img = doc.nodes[0] as ImageNode;
+      expect(img.altText, 'a scenic photo');
+    });
+
+    test('table cell with a nested delta-shaped value extracts text', () {
+      final payload = jsonEncode({
+        'cells': [
+          [
+            {'insert': 'nested text'},
+          ],
+        ],
+      });
+      final doc = deltaToQuire([
+        {
+          'insert': {'table': payload},
+        },
+        {'insert': '\n'},
+      ]);
+      final table = doc.nodes[0] as TableNode;
+      final cellNode = table.rows[0].cells[0].nodes[0] as TextNode;
+      expect(cellNode.text.text, 'nested text');
+      expect(cellNode.text.text, isNot(contains('insert')));
+    });
+
     test('unknown embed type is preserved, never throws', () {
       expect(
         () => deltaToQuire([

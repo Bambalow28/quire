@@ -444,7 +444,15 @@ class _QuireEditorState extends State<QuireEditor> {
       // a double-tap/long-press produces from the same gesture.
       _tapRepeatsCaret = _caretAlreadyAt(position.nodeId, offset);
       _tapDownAt = event.position;
-      widget.controller.requestFocus(position.nodeId);
+      // On touch, focus is requested once the gesture is confirmed as a tap
+      // (see `_handlePointerUp`/the long-press branch below) rather than
+      // here — a scroll swipe that starts on text would otherwise pop the
+      // keyboard for the instant before it's recognised as a scroll. A
+      // precise pointer (mouse/trackpad/stylus) has no such ambiguity: a
+      // drag starts a selection immediately, so it focuses right away.
+      if (event.kind != PointerDeviceKind.touch) {
+        widget.controller.requestFocus(position.nodeId);
+      }
     }
 
     _touchHoldTimer?.cancel();
@@ -487,6 +495,7 @@ class _QuireEditorState extends State<QuireEditor> {
         final id = widget.controller.focusedNodeId;
         if (id != null) _editableKeys[id]?.currentState?.showToolbar();
       } else if (position != null && _dragBase == null) {
+        widget.controller.requestFocus(position.nodeId);
         _placeCaret(
           position.nodeId,
           (position.nodePosition as TextNodePosition).offset,
@@ -615,7 +624,11 @@ class _QuireEditorState extends State<QuireEditor> {
 
       final focusNode = FocusNode(debugLabel: node.id);
       focusNode.addListener(() {
-        if (focusNode.hasFocus) widget.controller.focusNode(node.id);
+        if (focusNode.hasFocus) {
+          widget.controller.focusNode(node.id);
+        } else {
+          _handleFocusLost(node.id);
+        }
       });
       _focusNodes[node.id] = focusNode;
 
@@ -628,6 +641,26 @@ class _QuireEditorState extends State<QuireEditor> {
       final controller = _controllers[node.id];
       if (controller != null) _pairs.add((node, controller));
     }
+  }
+
+  /// [nodeId]'s field just lost focus. Deferred to a microtask rather than
+  /// checked synchronously: within the same tick, focus may still land on
+  /// another node in this editor (tapping from paragraph to paragraph) — or
+  /// this may be the toolbar's own panel-toggle dropping focus on purpose
+  /// (`QuireToolbar._togglePanel` calls `primaryFocus?.unfocus()` and relies
+  /// on `focusedNodeId` staying put so it can hand focus back later), which
+  /// leaves nothing focused at all rather than moving focus elsewhere. Only a
+  /// *third* case — some other real widget outside this editor ends up with
+  /// focus — means focus genuinely left the editor, and only then is
+  /// [focusedNodeId] cleared.
+  void _handleFocusLost(String nodeId) {
+    Future.microtask(() {
+      if (!mounted) return;
+      if (_focusNodes.values.any((f) => f.hasFocus)) return;
+      final primary = FocusManager.instance.primaryFocus;
+      if (primary == null || primary is FocusScopeNode) return;
+      widget.controller.clearFocusIfCurrent(nodeId);
+    });
   }
 
   /// Pushes the model's [AttributedText] into each node's controller. Text

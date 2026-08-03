@@ -43,8 +43,10 @@ typedef _Snapshot = ({Map<String, Object?> doc, Map<String, Object?>? sel});
 /// Once history is in use, call [EditHistory.execute] instead of
 /// `editor.execute(...)` directly — it snapshots before delegating, so
 /// [undo]/[redo] stay correct.
-class EditHistory {
-  EditHistory(this.editor, {this.maxEntries = 200});
+class EditHistory implements EditListener {
+  EditHistory(this.editor, {this.maxEntries = 200}) {
+    editor.addListener(this);
+  }
 
   final Editor editor;
   final int maxEntries;
@@ -57,6 +59,23 @@ class EditHistory {
   String? _streakNodeId;
   int? _streakNextOffset;
 
+  // Set while this instance is itself driving an `editor.execute` call, so
+  // `onEdit` can tell "an edit I recorded" from "an edit that reached the
+  // editor some other way" (e.g. a bare `editor.execute([ChangeSelectionRequest(...)])`
+  // that bypassed `execute` and so never broke the streak in `_record`).
+  bool _inOwnExecute = false;
+
+  /// Any edit that didn't go through [execute] (and so wasn't seen by
+  /// [_record]) invalidates a pending coalescing streak — otherwise a
+  /// selection change that lands back at the same offset could let two
+  /// unrelated typing sessions merge into one undo step.
+  @override
+  void onEdit(List<EditEvent> events) {
+    if (_inOwnExecute) return;
+    _streakNodeId = null;
+    _streakNextOffset = null;
+  }
+
   bool get canUndo => _undoStack.isNotEmpty;
   bool get canRedo => _redoStack.isNotEmpty;
   int get undoCount => _undoStack.length;
@@ -65,7 +84,12 @@ class EditHistory {
   /// [editor]. Use this instead of calling `editor.execute` directly.
   void execute(List<EditRequest> requests) {
     _record(requests);
-    editor.execute(requests);
+    _inOwnExecute = true;
+    try {
+      editor.execute(requests);
+    } finally {
+      _inOwnExecute = false;
+    }
   }
 
   void _record(List<EditRequest> requests) {

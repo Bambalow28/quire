@@ -34,4 +34,43 @@ void main() {
     expect(field.focusNode.hasFocus, isTrue, reason: 'bottom tap should focus');
     expect(controller.composer.selection, isNotNull);
   });
+
+  testWidgets(
+    'focus genuinely leaving the editor for another field clears '
+    'focusedNodeId',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('hello'))],
+        ),
+      );
+      final outsideFocus = FocusNode();
+      addTearDown(outsideFocus.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                TextField(focusNode: outsideFocus),
+                Expanded(child: QuireEditor(controller: controller)),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      final editorField = find.descendant(
+        of: find.byType(QuireEditor),
+        matching: find.byType(EditableText),
+      );
+      await tester.tap(editorField.first);
+      await tester.pumpAndSettle();
+      expect(controller.focusedNodeId, 'a');
+
+      outsideFocus.requestFocus();
+      await tester.pumpAndSettle();
+
+      expect(controller.focusedNodeId, isNull);
+    },
+  );
 }

@@ -190,10 +190,15 @@ class _DeleteTableRowCommand extends EditCommand {
 
     table.rows.removeAt(row);
     if (movedCells.isNotEmpty) {
+      // Origin columns for both the moved-down cells (originating in the
+      // deleted row) and the next row's own origin cells — a single map
+      // built off `grid[row]` alone is missing the latter.
       final originCol = <TableCell, int>{};
       for (var c = 0; c < numCols; c++) {
-        final cell = grid[row][c];
-        if (cell != null) originCol.putIfAbsent(cell, () => c);
+        final movedCell = grid[row][c];
+        if (movedCell != null) originCol.putIfAbsent(movedCell, () => c);
+        final nextCell = grid[row + 1][c];
+        if (nextCell != null) originCol.putIfAbsent(nextCell, () => c);
       }
       final nextRow = table.rows[row];
       final merged = [...nextRow.cells, ...movedCells]
@@ -367,6 +372,23 @@ class _MergeTableCellsCommand extends EditCommand {
     }
     final target = grid[r0][c0];
     if (target == null) return;
+
+    // `(r0,c0)` may be a covered position of a cell whose true origin lies
+    // elsewhere (same resolution SplitTableCellRequest does) — mutating
+    // rowSpan/colSpan relative to a non-origin position would desync the
+    // stored span from the cell's real position, so reject instead.
+    final originRow = <TableCell, int>{};
+    final originCol = <TableCell, int>{};
+    for (var r = 0; r < numRows; r++) {
+      for (var c = 0; c < numCols; c++) {
+        final g = grid[r][c];
+        if (g != null) {
+          originRow.putIfAbsent(g, () => r);
+          originCol.putIfAbsent(g, () => c);
+        }
+      }
+    }
+    if (originRow[target] != r0 || originCol[target] != c0) return;
 
     final seen = <TableCell>{target};
     final absorbed = <TableCell>[];

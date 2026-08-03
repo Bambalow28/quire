@@ -60,6 +60,16 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     notifyListeners();
   }
 
+  /// Clears [focusedNodeId] if it's still [nodeId] — called once the widget
+  /// layer confirms focus genuinely left the editor (not just moved between
+  /// two of its own nodes, and not the toolbar's own momentary unfocus while
+  /// it swaps in its panel), so a later tap starts from a clean state.
+  void clearFocusIfCurrent(String nodeId) {
+    if (_focusedNodeId != nodeId) return;
+    _focusedNodeId = null;
+    notifyListeners();
+  }
+
   @override
   void onEdit(List<EditEvent> events) => notifyListeners();
 
@@ -602,6 +612,8 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     final selection = composer.selection;
     if (selection == null || selection.isCollapsed) return;
     history.execute([DeleteSelectionRequest()]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
   }
 
   /// Selects the entire document, from the start of the first node to the
@@ -634,6 +646,8 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     if (selection == null || selection.isCollapsed) return;
     await copySelection();
     history.execute([DeleteSelectionRequest()]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
   }
 
   Future<void> pasteClipboard() async {
@@ -662,6 +676,8 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     if (!selection.isCollapsed) deleteSelection();
     if (composer.selection == null) return;
     history.execute([InsertRichContentRequest(nodes)]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
   }
 
   /// Replaces the current selection (deleting it first, if expanded) with
@@ -700,6 +716,8 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
         );
       }
     }
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
   }
 
   DocumentPosition _startOf(DocumentNode node) => DocumentPosition(

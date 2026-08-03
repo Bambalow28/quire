@@ -263,6 +263,54 @@ void main() {
     },
   );
 
+  test(
+    'DeleteSelectionRequest nulls the selection when deleting the sole '
+    '(non-text) node in the document',
+    () {
+      final doc = MutableDocument(nodes: [HorizontalRuleNode(id: 'hr')]);
+      final composer = DocumentComposer(
+        selection: const DocumentSelection(
+          base: DocumentPosition('hr', UpstreamDownstreamNodePosition.upstream()),
+          extent: DocumentPosition(
+            'hr',
+            UpstreamDownstreamNodePosition.downstream(),
+          ),
+        ),
+      );
+      final editor = _editor(doc, composer);
+
+      editor.execute([DeleteSelectionRequest()]);
+
+      expect(doc.nodes, isEmpty);
+      expect(composer.selection, isNull);
+    },
+  );
+
+  test(
+    'DeleteSelectionRequest nulls the selection when deleting a selection '
+    'spanning the entire document across two non-text nodes',
+    () {
+      final doc = MutableDocument(
+        nodes: [HorizontalRuleNode(id: 'a'), HorizontalRuleNode(id: 'b')],
+      );
+      final composer = DocumentComposer(
+        selection: const DocumentSelection(
+          base: DocumentPosition('a', UpstreamDownstreamNodePosition.upstream()),
+          extent: DocumentPosition(
+            'b',
+            UpstreamDownstreamNodePosition.downstream(),
+          ),
+        ),
+      );
+      final editor = _editor(doc, composer);
+
+      editor.execute([DeleteSelectionRequest()]);
+
+      expect(doc.nodes, isEmpty);
+      expect(composer.selection, isNull);
+    },
+  );
+
   test('InsertNodeRequest and DeleteNodeRequest', () {
     final doc = MutableDocument(nodes: [_para('a', 'x')]);
     final composer = DocumentComposer();

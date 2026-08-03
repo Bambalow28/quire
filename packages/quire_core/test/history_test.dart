@@ -161,6 +161,47 @@ void main() {
     },
   );
 
+  test(
+    'a selection change landing back at the same offset, submitted directly '
+    'through the editor (bypassing history.execute), breaks the typing streak',
+    () {
+      final doc = MutableDocument(nodes: [_para('a', 'Hello')]);
+      final composer = DocumentComposer();
+      final editor = Editor(
+        doc,
+        composer,
+        requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+      );
+      final history = EditHistory(editor);
+
+      history.execute([
+        InsertTextRequest(DocumentPosition('a', const TextNodePosition(5)), 'X'),
+      ]);
+      expect((doc.getNodeById('a') as TextNode).text.text, 'HelloX');
+
+      // Bypasses history.execute entirely — as e.g. pure caret-movement UI
+      // code might, since it isn't undo-worthy on its own — landing right
+      // back at the offset the next keystroke would continue from.
+      editor.execute([
+        ChangeSelectionRequest(
+          DocumentSelection.collapsed(
+            DocumentPosition('a', const TextNodePosition(6)),
+          ),
+        ),
+      ]);
+
+      history.execute([
+        InsertTextRequest(DocumentPosition('a', const TextNodePosition(6)), 'Y'),
+      ]);
+      expect((doc.getNodeById('a') as TextNode).text.text, 'HelloXY');
+
+      // The two inserts must not have coalesced: undoing once only removes
+      // the second character.
+      history.undo();
+      expect((doc.getNodeById('a') as TextNode).text.text, 'HelloX');
+    },
+  );
+
   test('EditHistory.execute records automatically, no manual record step', () {
     final doc = MutableDocument(nodes: [_para('a', 'Hello')]);
     final composer = DocumentComposer();

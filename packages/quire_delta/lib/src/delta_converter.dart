@@ -70,7 +70,10 @@ MutableDocument deltaToQuire(List<dynamic> delta) {
       }
     } else if (insertVal is Map) {
       pending.add(
-        _EmbedSegment(insertVal.map((k, v) => MapEntry(k.toString(), v))),
+        _EmbedSegment(
+          insertVal.map((k, v) => MapEntry(k.toString(), v)),
+          attrs,
+        ),
       );
     } else {
       continue;
@@ -130,8 +133,9 @@ class _TextSegment extends _Segment {
 }
 
 class _EmbedSegment extends _Segment {
-  _EmbedSegment(this.data);
+  _EmbedSegment(this.data, this.attrs);
   final Map<String, Object?> data;
+  final Map<String, Object?> attrs;
 }
 
 TextNode _emptyTextNode(Map<String, Object?> blockAttrs) => TextNode(
@@ -163,8 +167,16 @@ TextNode _buildTextNode(
 
 DocumentNode _buildEmbedNode(_EmbedSegment seg) {
   final data = seg.data;
+  if (data.containsKey('divider')) {
+    return HorizontalRuleNode(id: generateNodeId());
+  }
   if (data.containsKey('image')) {
-    return ImageNode(id: generateNodeId(), url: _stringify(data['image']));
+    final alt = seg.attrs['alt'];
+    return ImageNode(
+      id: generateNodeId(),
+      url: _stringify(data['image']),
+      altText: alt is String ? alt : null,
+    );
   }
   if (data.containsKey('video')) {
     final url = _stringify(data['video']);
@@ -214,7 +226,7 @@ DocumentNode _buildTableNode(Object? payload) {
             nodes: [
               TextNode(
                 id: generateNodeId(),
-                text: AttributedText(cellRaw?.toString() ?? ''),
+                text: AttributedText(_cellText(cellRaw)),
               ),
             ],
           ),
@@ -231,6 +243,25 @@ DocumentNode _buildTableNode(Object? payload) {
 }
 
 String _stringify(Object? v) => v is String ? v : jsonEncode(v);
+
+/// Extracts plain text from a table cell's raw value. Cells are normally
+/// plain strings, but some quill forks store a nested delta (a `List` of
+/// `{'insert': ...}` ops, or a bare `{'insert': ...}` map) instead — walk
+/// those for their text rather than falling through to `toString()`, which
+/// would leak Dart's `{insert: text}` object syntax into the note.
+String _cellText(Object? v) {
+  if (v == null) return '';
+  if (v is String) return v;
+  if (v is Map && v['insert'] is String) return v['insert'] as String;
+  if (v is List) {
+    final buffer = StringBuffer();
+    for (final op in v) {
+      if (op is Map && op['insert'] is String) buffer.write(op['insert']);
+    }
+    return buffer.toString();
+  }
+  return v.toString();
+}
 
 Set<Attribution> _parseInlineAttributions(Map<String, Object?> attrs) {
   final result = <Attribution>{};
