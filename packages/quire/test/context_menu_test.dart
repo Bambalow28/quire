@@ -50,4 +50,46 @@ void main() {
       containsAll([ContextMenuButtonType.cut, ContextMenuButtonType.copy]),
     );
   });
+
+  testWidgets(
+    "caret menu's Select All selects the whole document, not just one node",
+    (tester) async {
+      // Regression test: EditableText's own default "Select All" button
+      // (spread in via state.contextMenuButtonItems) only selects within
+      // that one field's own text. Touch users have no other way to reach
+      // controller.selectAll() (Cmd/Ctrl+A needs a hardware keyboard), so
+      // this button must be the document-wide one, not the field-local one.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QuireEditor(controller: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final target =
+          tester.getTopLeft(find.byType(EditableText).first) +
+          const Offset(20, 8);
+      await tester.tapAt(target); // caret
+      await tester.pumpAndSettle();
+      await tester.tapAt(target); // caret again -> menu
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      expect(startPos, DocumentPosition('a', const TextNodePosition(0)));
+      expect(endPos.nodeId, 'b');
+    },
+  );
 }

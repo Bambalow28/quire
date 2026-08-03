@@ -1411,7 +1411,25 @@ class _QuireEditorState extends State<QuireEditor> {
                     );
                   },
                 ),
-              ...state.contextMenuButtonItems,
+              // EditableText's own "Select All" button (from
+              // state.contextMenuButtonItems below) selects only within
+              // this one field's own text — there's no touch path to the
+              // document-wide controller.selectAll() otherwise (Cmd/Ctrl+A
+              // only fires from a hardware keyboard). Replace it so the one
+              // "Select All" button touch users actually have reaches the
+              // whole document, the way the drag handles expect.
+              for (final item in state.contextMenuButtonItems)
+                if (item.type == ContextMenuButtonType.selectAll)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.selectAll,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.selectAll();
+                    },
+                  )
+                else
+                  item,
             ],
           );
         },
