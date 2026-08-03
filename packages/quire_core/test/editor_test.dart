@@ -248,7 +248,7 @@ void main() {
       );
       final history = EditHistory(editor);
 
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0);
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.15);
 
       history.execute([ChangeLineSpacingRequest(1.5)]);
       expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.5);
@@ -259,7 +259,7 @@ void main() {
       expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0); // clamped
 
       history.undo();
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0);
+      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.15);
     },
   );
 

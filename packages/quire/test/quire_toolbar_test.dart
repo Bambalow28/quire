@@ -161,8 +161,10 @@ void main() {
     TextNode node() => controller.document.getNodeById('a') as TextNode;
 
     await openPanel(tester);
-    expect(node().lineSpacing, 1.0);
+    expect(node().lineSpacing, 1.15); // default is the first increase
 
+    await tapOption(tester, Icons.unfold_less);
+    expect(node().lineSpacing, 1.0);
     // Already at the bottom step — decreasing further is a no-op.
     await tapOption(tester, Icons.unfold_less);
     expect(node().lineSpacing, 1.0);

@@ -370,4 +370,167 @@ void main() {
     expect(selection, isNotNull);
     expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
   });
+
+  Finder startHandle() => find.byKey(const ValueKey('quire-start-handle'));
+  Finder endHandle() => find.byKey(const ValueKey('quire-end-handle'));
+
+  testWidgets(
+    'selection handles only appear for a non-collapsed multi-node selection',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      // No selection at all.
+      expect(startHandle(), findsNothing);
+      expect(endHandle(), findsNothing);
+
+      // Collapsed, single-node selection.
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(0)),
+        ),
+      );
+      await tester.pump();
+      expect(startHandle(), findsNothing);
+      expect(endHandle(), findsNothing);
+
+      // Non-collapsed, but confined to a single node.
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('a', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+      expect(startHandle(), findsNothing);
+      expect(endHandle(), findsNothing);
+
+      // Non-collapsed and multi-node: both handles show up.
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('b', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+      expect(startHandle(), findsOneWidget);
+      expect(endHandle(), findsOneWidget);
+    },
+  );
+
+  testWidgets('selectAll() on a multi-paragraph document shows both handles', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(id: 'a', text: AttributedText('first')),
+          TextNode(id: 'b', text: AttributedText('second')),
+          TextNode(id: 'c', text: AttributedText('third')),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    controller.selectAll();
+    await tester.pump();
+
+    expect(startHandle(), findsOneWidget);
+    expect(endHandle(), findsOneWidget);
+  });
+
+  testWidgets(
+    'dragging the start handle moves the selection start and leaves the end '
+    'unchanged',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+            TextNode(id: 'c', text: AttributedText('third paragraph')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('c', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+      expect(startHandle(), findsOneWidget);
+
+      // Drag the start handle down into paragraph 'b'.
+      final target =
+          tester.getTopLeft(find.byType(EditableText).at(1)) +
+          const Offset(4, 8);
+      final gesture = await tester.startGesture(
+        tester.getCenter(startHandle()),
+      );
+      await tester.pump();
+      await gesture.moveTo(target);
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      expect(startPos.nodeId, 'b');
+      expect(endPos, DocumentPosition('c', const TextNodePosition(5)));
+    },
+  );
+
+  testWidgets(
+    'dragging the end handle moves the selection end and leaves the start '
+    'unchanged',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+            TextNode(id: 'c', text: AttributedText('third paragraph')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('c', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+      expect(endHandle(), findsOneWidget);
+
+      // Drag the end handle up into paragraph 'b'.
+      final target =
+          tester.getTopLeft(find.byType(EditableText).at(1)) +
+          const Offset(4, 8);
+      final gesture = await tester.startGesture(tester.getCenter(endHandle()));
+      await tester.pump();
+      await gesture.moveTo(target);
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      expect(startPos, DocumentPosition('a', const TextNodePosition(0)));
+      expect(endPos.nodeId, 'b');
+    },
+  );
 }

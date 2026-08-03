@@ -338,7 +338,8 @@ class _OptionsPanel extends StatelessWidget {
             _AlignmentRow(controller: controller),
             Builder(
               builder: (context) {
-                final spacing = controller.focusedTextNode?.lineSpacing ?? 1.0;
+                final spacing =
+                    controller.focusedTextNode?.lineSpacing ?? 1.15;
                 final index = _lineSpacingSteps.indexOf(spacing);
                 // Not one of the fixed steps (e.g. loaded from other
                 // content) — treat as between steps rather than crashing on

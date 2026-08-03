@@ -17,7 +17,7 @@ class TableSettingsMenu extends StatelessWidget {
     super.key,
     required this.controller,
     required this.tableId,
-    this.icon = const Icon(Icons.grid_on_outlined),
+    this.icon = const Icon(Icons.settings_outlined),
     this.iconSize,
     this.padding = const EdgeInsets.all(8),
     this.tooltip = 'Table settings',

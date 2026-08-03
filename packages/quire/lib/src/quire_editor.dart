@@ -111,6 +111,25 @@ class _QuireEditorState extends State<QuireEditor> {
   Offset? _touchDownAt;
   Timer? _touchHoldTimer;
 
+  /// Global hit-test rects for the two draggable selection handles (see
+  /// [_buildSelectionHandles]), refreshed every build. `null` whenever no
+  /// handle is showing. Checked by [_handlePointerDown] so a touch that
+  /// starts on a handle is left entirely to that handle's own
+  /// `GestureDetector` instead of also being picked up as a document-level
+  /// tap/drag by the raw `Listener` — both currently see every pointer
+  /// event, since `Listener` doesn't participate in the gesture arena.
+  Rect? _startHandleHitRect;
+  Rect? _endHandleHitRect;
+
+  /// Whether the pointer currently down started on a handle — see the
+  /// comment in [_handlePointerDown] for why [_handlePointerUp] needs this
+  /// instead of just re-checking the up position.
+  bool _pointerDownOnHandle = false;
+
+  bool _isOnSelectionHandle(Offset globalPosition) =>
+      (_startHandleHitRect?.contains(globalPosition) ?? false) ||
+      (_endHandleHitRect?.contains(globalPosition) ?? false);
+
   bool get _hasMultiNodeSelection {
     final selection = widget.controller.composer.selection;
     return selection != null &&
@@ -221,6 +240,7 @@ class _QuireEditorState extends State<QuireEditor> {
               ),
             ),
           ),
+          ..._buildSelectionHandles(context),
         ],
       ),
     );
@@ -436,6 +456,14 @@ class _QuireEditorState extends State<QuireEditor> {
   static const _touchSlop = 12.0;
 
   void _handlePointerDown(PointerDownEvent event) {
+    // A handle's own `GestureDetector` is a descendant of this `Listener`,
+    // so this still fires for the same down/move/up events regardless of
+    // what the handle does with them (Listener sees every event once it's
+    // in a pointer's hit-test route, independent of the gesture arena) —
+    // remembered here and re-checked in `_handlePointerUp` so a handle drag
+    // doesn't ALSO get treated as a tap that collapses the caret.
+    _pointerDownOnHandle = _isOnSelectionHandle(event.position);
+    if (_pointerDownOnHandle) return;
     final position = _positionAt(event.position);
     if (position != null) {
       final offset = (position.nodePosition as TextNodePosition).offset;
@@ -483,6 +511,11 @@ class _QuireEditorState extends State<QuireEditor> {
   /// is what every native text field does. Shown on pointer *up* so the same
   /// tap's release doesn't dismiss it.
   void _handlePointerUp(PointerUpEvent event) {
+    if (_pointerDownOnHandle) {
+      _pointerDownOnHandle = false;
+      _endDrag();
+      return;
+    }
     final downAt = _tapDownAt;
     final moved = downAt != null && (event.position - downAt).distance > 8;
     if (!moved) {
@@ -512,6 +545,7 @@ class _QuireEditorState extends State<QuireEditor> {
     _touchHoldTimer = null;
     _touchDownAt = null;
     _dragBase = null;
+    _pointerDownOnHandle = false;
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
@@ -597,6 +631,164 @@ class _QuireEditorState extends State<QuireEditor> {
       }
     }
     return rects;
+  }
+
+  // --- Multi-node selection drag handles ----------------------------------
+
+  static const _handleKnobDiameter = 14.0;
+  static const _handleHitSize = 24.0;
+
+  /// The caret-height rect (in this editor's own coordinate space) at
+  /// exactly [position] — unlike [_computeOverlayRects]'s per-line boxes
+  /// (which stretch to the render width for every node but the last), this
+  /// is a precise, zero-width caret rect at one specific offset, which is
+  /// what a selection handle needs to sit exactly on the selection's edge.
+  Rect? _caretRectAt(DocumentPosition position) {
+    final nodePosition = position.nodePosition;
+    if (nodePosition is! TextNodePosition) return null;
+    final renderEditable = _laidOutEditable(position.nodeId);
+    if (renderEditable == null) return null;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (editorBox == null || !editorBox.attached) return null;
+
+    final caretRect = renderEditable.getLocalRectForCaret(
+      TextPosition(offset: _toField(nodePosition.offset)),
+    );
+    final topLeft = editorBox.globalToLocal(
+      renderEditable.localToGlobal(caretRect.topLeft),
+    );
+    final bottomRight = editorBox.globalToLocal(
+      renderEditable.localToGlobal(caretRect.bottomRight),
+    );
+    return Rect.fromPoints(topLeft, bottomRight);
+  }
+
+  /// The hit-test rect (editor-local) for a handle drawn against
+  /// [caretRect] — bigger than the visible knob so it's an easy touch
+  /// target, and used both to lay the handle out and (via
+  /// [_startHandleHitRect]/[_endHandleHitRect]) to keep the document-level
+  /// drag `Listener` from also reacting to the same touch.
+  Rect _handleLocalRect(Rect caretRect, {required bool isStart}) {
+    final visualHeight = caretRect.height + _handleKnobDiameter;
+    final height = math.max(_handleHitSize, visualHeight);
+    final left = caretRect.left - _handleHitSize / 2;
+    final top = isStart ? caretRect.top - _handleKnobDiameter : caretRect.top;
+    return Rect.fromLTWH(left, top, _handleHitSize, height);
+  }
+
+  /// A vertical bar with a circular knob — at the top for the start handle,
+  /// at the bottom for the end handle — matching the native iOS/Android
+  /// text-selection handle look, wrapped in its own `GestureDetector` so its
+  /// drag is scoped to just this widget rather than fighting the
+  /// document-level `Listener`.
+  Widget _buildHandle({
+    required Rect caretRect,
+    required bool isStart,
+    required Color color,
+    required ValueChanged<Offset> onDragUpdate,
+  }) {
+    final knob = Container(
+      width: _handleKnobDiameter,
+      height: _handleKnobDiameter,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
+    final bar = Container(width: 2, height: caretRect.height, color: color);
+    return Positioned.fromRect(
+      key: ValueKey(isStart ? 'quire-start-handle' : 'quire-end-handle'),
+      rect: _handleLocalRect(caretRect, isStart: isStart),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanUpdate: (details) => onDragUpdate(details.globalPosition),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: isStart ? [knob, bar] : [bar, knob],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Draggable start/end handles for the current multi-node selection.
+  /// Native `EditableText` handles only ever cover a single field, so once a
+  /// selection spans nodes (e.g. after `selectAll()` on a multi-paragraph
+  /// document) there is otherwise nothing to grab. Empty under exactly the
+  /// same condition as [_computeOverlayRects] (collapsed or single-node
+  /// selection), which is left entirely to the field's own native handles.
+  List<Widget> _buildSelectionHandles(BuildContext context) {
+    final selection = widget.controller.composer.selection;
+    if (!_hasMultiNodeSelection || selection == null) {
+      _startHandleHitRect = null;
+      _endHandleHitRect = null;
+      return const [];
+    }
+    final document = widget.controller.document;
+    final (startPos, endPos) = selection.normalize(document);
+    final startRect = _caretRectAt(startPos);
+    final endRect = _caretRectAt(endPos);
+    if (startRect == null || endRect == null) {
+      _startHandleHitRect = null;
+      _endHandleHitRect = null;
+      return const [];
+    }
+
+    final startLocalRect = _handleLocalRect(startRect, isStart: true);
+    final endLocalRect = _handleLocalRect(endRect, isStart: false);
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (editorBox != null && editorBox.attached) {
+      _startHandleHitRect =
+          editorBox.localToGlobal(startLocalRect.topLeft) & startLocalRect.size;
+      _endHandleHitRect =
+          editorBox.localToGlobal(endLocalRect.topLeft) & endLocalRect.size;
+    } else {
+      _startHandleHitRect = null;
+      _endHandleHitRect = null;
+    }
+
+    final color = Theme.of(context).colorScheme.primary;
+    return [
+      _buildHandle(
+        caretRect: startRect,
+        isStart: true,
+        color: color,
+        onDragUpdate: (p) =>
+            _dragSelectionHandle(isStart: true, globalPosition: p),
+      ),
+      _buildHandle(
+        caretRect: endRect,
+        isStart: false,
+        color: color,
+        onDragUpdate: (p) =>
+            _dragSelectionHandle(isStart: false, globalPosition: p),
+      ),
+    ];
+  }
+
+  /// Moves the visual start (or end) of the current selection to wherever
+  /// [globalPosition] lands, keeping the other end fixed — regardless of
+  /// which of `selection.base`/`selection.extent` is currently the visual
+  /// start vs end (that depends on which direction the original select
+  /// gesture went), via [DocumentSelection.normalize].
+  void _dragSelectionHandle({
+    required bool isStart,
+    required Offset globalPosition,
+  }) {
+    final selection = widget.controller.composer.selection;
+    if (selection == null) return;
+    final newPosition = _positionAt(globalPosition);
+    if (newPosition == null) return;
+    final (startPos, endPos) = selection.normalize(widget.controller.document);
+    final target = isStart ? startPos : endPos;
+    final fixed = isStart ? endPos : startPos;
+    final targetIsBase = selection.base == target;
+    widget.controller.changeSelection(
+      DocumentSelection(
+        base: targetIsBase ? newPosition : fixed,
+        extent: targetIsBase ? fixed : newPosition,
+      ),
+    );
   }
 
   // --- Controller/focus-node bookkeeping ----------------------------------
@@ -1091,7 +1283,7 @@ class _QuireEditorState extends State<QuireEditor> {
               controller: widget.controller,
               tableId: node.id,
               icon: Icon(
-                Icons.grid_on_outlined,
+                Icons.settings_outlined,
                 size: 16,
                 color: Theme.of(context).hintColor,
               ),
