@@ -111,13 +111,19 @@ class _QuireEditorState extends State<QuireEditor> {
   Offset? _touchDownAt;
   Timer? _touchHoldTimer;
 
-  /// Global hit-test rects for the two draggable selection handles (see
-  /// [_buildSelectionHandles]), refreshed every build. `null` whenever no
-  /// handle is showing. Checked by [_handlePointerDown] so a touch that
-  /// starts on a handle is left entirely to that handle's own `Listener`
-  /// (see [_buildHandle]) instead of also being picked up as a
-  /// document-level tap/drag — both `Listener`s see every pointer event
-  /// regardless, since `Listener` doesn't participate in the gesture arena.
+  /// Global hit-test rects for the current selection's two handles, refreshed
+  /// every build by [_buildSelectionHandles] — for a multi-node selection
+  /// these are quire's own draggable handles (see [_buildHandle]); for a
+  /// selection confined to a single node there's no such widget (Flutter's
+  /// own `EditableText`/`TextSelectionOverlay` draws and drives that handle
+  /// entirely internally), but the rects are still computed so this
+  /// document-level `Listener` knows to back off. `null` whenever no handle
+  /// is showing (collapsed or no selection). Checked by [_handlePointerDown]
+  /// so a touch that starts on either kind of handle is left to that
+  /// handle's own gesture handling instead of also being picked up as a
+  /// document-level tap/drag — every `Listener` in the tree sees every
+  /// pointer event regardless, since `Listener` doesn't participate in the
+  /// gesture arena.
   Rect? _startHandleHitRect;
   Rect? _endHandleHitRect;
 
@@ -759,15 +765,21 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
-  /// Draggable start/end handles for the current multi-node selection.
-  /// Native `EditableText` handles only ever cover a single field, so once a
-  /// selection spans nodes (e.g. after `selectAll()` on a multi-paragraph
-  /// document) there is otherwise nothing to grab. Empty under exactly the
-  /// same condition as [_computeOverlayRects] (collapsed or single-node
-  /// selection), which is left entirely to the field's own native handles.
+  /// Draggable start/end handles for the current selection, plus (as a side
+  /// effect) [_startHandleHitRect]/[_endHandleHitRect] for
+  /// [_isOnSelectionHandle]. Builds actual widgets only for a *multi-node*
+  /// selection — native `EditableText` handles only ever cover a single
+  /// field, so once a selection spans nodes (e.g. after `selectAll()` on a
+  /// multi-paragraph document) there is otherwise nothing to grab. A
+  /// selection confined to a single node already has Flutter's own native
+  /// handles (drawn and dragged entirely by that field's
+  /// `EditableText`/`TextSelectionOverlay`), so no widget is built for it
+  /// here — but the hit rects are still computed and stored, so the
+  /// document-level `Listener` can recognise a touch-down on one of them and
+  /// back off instead of hijacking the native handle's drag.
   List<Widget> _buildSelectionHandles(BuildContext context) {
     final selection = widget.controller.composer.selection;
-    if (!_hasMultiNodeSelection || selection == null) {
+    if (selection == null || selection.isCollapsed) {
       _startHandleHitRect = null;
       _endHandleHitRect = null;
       return const [];
@@ -795,6 +807,10 @@ class _QuireEditorState extends State<QuireEditor> {
       _startHandleHitRect = null;
       _endHandleHitRect = null;
     }
+
+    // A single-node selection's handles are native — only the hit rects
+    // above (just computed) are needed for it, no custom widget.
+    if (!_hasMultiNodeSelection) return const [];
 
     final color = Theme.of(context).colorScheme.primary;
     return [

@@ -596,4 +596,115 @@ void main() {
       expect(endPos, DocumentPosition('p2', const TextNodePosition(5)));
     },
   );
+
+  testWidgets(
+    'a touch that lands on a single-node selection\'s native start handle '
+    'is left alone instead of long-press jumping the selection to a '
+    'different word',
+    (tester) async {
+      // Regression test for a bug found live: with a single word selected
+      // within one paragraph, a touch near the selection's edge (where the
+      // native EditableText handle sits) used to be treated as an ordinary
+      // document-level touch, whose "nearest node above" fallback and
+      // long-press-hold word-select timer would jump the selection to an
+      // unrelated word (offset 0 of the same node) instead of leaving the
+      // native handle's own drag alone.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('First paragraph here')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      // Select "paragraph" (offsets 6-15) — non-collapsed, confined to a
+      // single node, so its handles are Flutter's own native ones.
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(6)),
+          extent: DocumentPosition('a', const TextNodePosition(15)),
+        ),
+      );
+      controller.requestFocus('a');
+      await tester.pump();
+
+      final state = tester.state<EditableTextState>(
+        find.byType(EditableText).first,
+      );
+      final renderEditable = state.renderEditable;
+      // Fields render a leading zero-width sentinel char (see
+      // `_emptyNodeSentinel`) ahead of the real text, so a field-space
+      // TextPosition is one ahead of the model offset.
+      final caretRect = renderEditable.getLocalRectForCaret(
+        const TextPosition(offset: 6 + 1),
+      );
+      final caretTopGlobal = renderEditable.localToGlobal(caretRect.topLeft);
+      // A few px above the caret's top: inside the start handle's hit
+      // region (which reaches above the line for its knob) but above the
+      // field's own render rect — exactly the touch that used to fall
+      // through to the "nearest node above" fallback.
+      final handlePoint = caretTopGlobal + const Offset(0, -5);
+
+      final gesture = await tester.startGesture(handlePoint);
+      // Long enough to fire the old word-select-on-hold timer were this
+      // touch not recognised as landing on the native handle.
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection!;
+      final (startPos, endPos) = selection.normalize(controller.document);
+      expect(startPos, DocumentPosition('a', const TextNodePosition(6)));
+      expect(endPos, DocumentPosition('a', const TextNodePosition(15)));
+    },
+  );
+
+  testWidgets(
+    'the same native-handle exemption holds regardless of document length '
+    '(not just a short single-paragraph document)',
+    (tester) async {
+      final nodes = List.generate(
+        20,
+        (i) => TextNode(id: 'p$i', text: AttributedText('paragraph number $i')),
+      );
+      final controller = QuireEditorController(
+        document: MutableDocument(nodes: nodes),
+      );
+      await _pumpEditor(tester, controller);
+
+      // Select "number" within the first node — single-node selection deep
+      // in a long, scrollable document.
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('p0', const TextNodePosition(10)),
+          extent: DocumentPosition('p0', const TextNodePosition(16)),
+        ),
+      );
+      controller.requestFocus('p0');
+      await tester.pump();
+
+      final state = tester.state<EditableTextState>(
+        find.byType(EditableText).first,
+      );
+      final renderEditable = state.renderEditable;
+      final caretRect = renderEditable.getLocalRectForCaret(
+        const TextPosition(offset: 10 + 1),
+      );
+      final handlePoint =
+          renderEditable.localToGlobal(caretRect.topLeft) +
+          const Offset(0, -5);
+
+      final gesture = await tester.startGesture(handlePoint);
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection!;
+      final (startPos, endPos) = selection.normalize(controller.document);
+      expect(startPos, DocumentPosition('p0', const TextNodePosition(10)));
+      expect(endPos, DocumentPosition('p0', const TextNodePosition(16)));
+    },
+  );
 }
