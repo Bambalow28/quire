@@ -170,6 +170,10 @@ class MutableDocument {
   }
 
   void _indexNode(DocumentNode node, List<DocumentNode> container) {
+    assert(
+      _idIndex[node.id] == null || identical(_idIndex[node.id], node),
+      'Duplicate node id "${node.id}": two distinct nodes cannot share an id.',
+    );
     _idIndex[node.id] = node;
     _containerOf[node.id] = container;
     if (node is TableNode) {

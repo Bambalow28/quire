@@ -57,4 +57,14 @@ void main() {
 
     expect(restored.getNodeById('hr1'), isA<HorizontalRuleNode>());
   });
+
+  test('generateNodeId ids are unique, not just monotonic', () {
+    // Regression test: a plain per-process counter (old `node-N`) restarts
+    // from 'node-0' on every app launch, so reopening a persisted document
+    // and creating a new node collides with an id already in that document.
+    // A random component makes the sequence differ across "sessions" even
+    // when the counter itself would otherwise restart from the same value.
+    final ids = List.generate(200, (_) => generateNodeId());
+    expect(ids.toSet().length, ids.length);
+  });
 }
