@@ -114,10 +114,10 @@ class _QuireEditorState extends State<QuireEditor> {
   /// Global hit-test rects for the two draggable selection handles (see
   /// [_buildSelectionHandles]), refreshed every build. `null` whenever no
   /// handle is showing. Checked by [_handlePointerDown] so a touch that
-  /// starts on a handle is left entirely to that handle's own
-  /// `GestureDetector` instead of also being picked up as a document-level
-  /// tap/drag by the raw `Listener` — both currently see every pointer
-  /// event, since `Listener` doesn't participate in the gesture arena.
+  /// starts on a handle is left entirely to that handle's own `Listener`
+  /// (see [_buildHandle]) instead of also being picked up as a
+  /// document-level tap/drag — both `Listener`s see every pointer event
+  /// regardless, since `Listener` doesn't participate in the gesture arena.
   Rect? _startHandleHitRect;
   Rect? _endHandleHitRect;
 
@@ -125,6 +125,20 @@ class _QuireEditorState extends State<QuireEditor> {
   /// comment in [_handlePointerDown] for why [_handlePointerUp] needs this
   /// instead of just re-checking the up position.
   bool _pointerDownOnHandle = false;
+
+  /// The pointer id currently dragging each handle, or `null` when that
+  /// handle isn't being dragged — set on that handle's own `onPointerDown`
+  /// (see [_buildHandle]) so its `onPointerMove`/`onPointerUp` keep reacting
+  /// to that exact pointer no matter where the finger travels afterward,
+  /// same as a `Listener`'s owner keeps receiving events for a pointer that
+  /// started within its hit-test area even once it moves outside those
+  /// original bounds. A plain `GestureDetector.onPanUpdate` would lose this
+  /// gesture to the ancestor `CustomScrollView`'s own drag recognizer in a
+  /// genuinely scrollable document (the arena fight the document-level drag
+  /// above already avoids by using a raw `Listener`) — using `Listener` here
+  /// too sidesteps the same fight.
+  int? _startHandlePointerId;
+  int? _endHandlePointerId;
 
   bool _isOnSelectionHandle(Offset globalPosition) =>
       (_startHandleHitRect?.contains(globalPosition) ?? false) ||
@@ -456,12 +470,13 @@ class _QuireEditorState extends State<QuireEditor> {
   static const _touchSlop = 12.0;
 
   void _handlePointerDown(PointerDownEvent event) {
-    // A handle's own `GestureDetector` is a descendant of this `Listener`,
-    // so this still fires for the same down/move/up events regardless of
-    // what the handle does with them (Listener sees every event once it's
-    // in a pointer's hit-test route, independent of the gesture arena) —
-    // remembered here and re-checked in `_handlePointerUp` so a handle drag
-    // doesn't ALSO get treated as a tap that collapses the caret.
+    // A handle's own `Listener` (see [_buildHandle]) is a descendant of this
+    // `Listener`, so this still fires for the same down/move/up events
+    // regardless of what the handle does with them (Listener sees every
+    // event once it's in a pointer's hit-test route, independent of the
+    // gesture arena) — remembered here and re-checked in `_handlePointerUp`
+    // so a handle drag doesn't ALSO get treated as a tap that collapses the
+    // caret.
     _pointerDownOnHandle = _isOnSelectionHandle(event.position);
     if (_pointerDownOnHandle) return;
     final position = _positionAt(event.position);
@@ -679,9 +694,17 @@ class _QuireEditorState extends State<QuireEditor> {
 
   /// A vertical bar with a circular knob — at the top for the start handle,
   /// at the bottom for the end handle — matching the native iOS/Android
-  /// text-selection handle look, wrapped in its own `GestureDetector` so its
-  /// drag is scoped to just this widget rather than fighting the
-  /// document-level `Listener`.
+  /// text-selection handle look. Wrapped in its own raw `Listener` rather
+  /// than a `GestureDetector`/`onPanUpdate`, for the same reason the
+  /// document-level drag above uses one (see the comment on [_dragBase]'s
+  /// content build above): a `GestureDetector` pan recognizer here would
+  /// have to win the gesture arena against the ancestor `CustomScrollView`'s
+  /// own vertical-drag recognizer, and loses in a genuinely scrollable
+  /// document. A `Listener` just observes the raw pointer stream, so it
+  /// can't lose that fight. [_startHandlePointerId]/[_endHandlePointerId]
+  /// track which pointer this handle owns so its move/up handlers keep
+  /// reacting to that pointer even once the finger travels outside this
+  /// widget's original hit-test bounds.
   Widget _buildHandle({
     required Rect caretRect,
     required bool isStart,
@@ -697,9 +720,35 @@ class _QuireEditorState extends State<QuireEditor> {
     return Positioned.fromRect(
       key: ValueKey(isStart ? 'quire-start-handle' : 'quire-end-handle'),
       rect: _handleLocalRect(caretRect, isStart: isStart),
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPanUpdate: (details) => onDragUpdate(details.globalPosition),
+        onPointerDown: (event) {
+          if (isStart) {
+            _startHandlePointerId = event.pointer;
+          } else {
+            _endHandlePointerId = event.pointer;
+          }
+        },
+        onPointerMove: (event) {
+          final owns = isStart
+              ? _startHandlePointerId == event.pointer
+              : _endHandlePointerId == event.pointer;
+          if (owns) onDragUpdate(event.position);
+        },
+        onPointerUp: (event) {
+          if (isStart) {
+            _startHandlePointerId = null;
+          } else {
+            _endHandlePointerId = null;
+          }
+        },
+        onPointerCancel: (event) {
+          if (isStart) {
+            _startHandlePointerId = null;
+          } else {
+            _endHandlePointerId = null;
+          }
+        },
         child: Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,

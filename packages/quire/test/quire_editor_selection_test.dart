@@ -533,4 +533,67 @@ void main() {
       expect(endPos.nodeId, 'b');
     },
   );
+
+  testWidgets(
+    'dragging a handle in a genuinely scrollable document still updates the '
+    'selection, not swallowed by the ancestor CustomScrollView drag',
+    (tester) async {
+      // Enough long paragraphs that the document overflows the 600-tall
+      // viewport _pumpEditor uses — a real ancestor Scrollable with nonzero
+      // scroll extent, competing in the gesture arena, is what a plain
+      // GestureDetector.onPanUpdate handle loses to. The first three nodes
+      // still lay out within the initial (unscrolled) viewport, so the drag
+      // itself doesn't need to cross a scroll boundary to reproduce it.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: List.generate(
+            30,
+            (i) => TextNode(
+              id: 'p$i',
+              text: AttributedText(
+                'paragraph number $i with enough extra text in it to wrap '
+                'across multiple lines and add real height to the document',
+              ),
+            ),
+          ),
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('p0', const TextNodePosition(0)),
+          extent: DocumentPosition('p2', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+      expect(startHandle(), findsOneWidget);
+
+      // Drag the start handle down into paragraph 'p1', in small incremental
+      // steps (like a real finger) rather than one teleporting jump — that's
+      // what actually engages the ScrollView's own drag recognizer in the
+      // gesture arena.
+      final target =
+          tester.getTopLeft(find.byType(EditableText).at(1)) +
+          const Offset(4, 8);
+      final start = tester.getCenter(startHandle());
+      final gesture = await tester.startGesture(start);
+      await tester.pump();
+      const steps = 10;
+      for (var i = 1; i <= steps; i++) {
+        await gesture.moveTo(
+          Offset.lerp(start, target, i / steps)!,
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      expect(startPos.nodeId, 'p1');
+      expect(endPos, DocumentPosition('p2', const TextNodePosition(5)));
+    },
+  );
 }
