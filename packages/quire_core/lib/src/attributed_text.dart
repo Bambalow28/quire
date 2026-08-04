@@ -224,6 +224,27 @@ class AttributedText {
     ]);
   }
 
+  /// Removes every span named [name] (any value) from `[start, end)`,
+  /// regardless of its `value` — unlike [removeAttribution], which only
+  /// removes a span matching one exact [Attribution] (name *and* value).
+  /// Needed for attributions like `fontSize` where the caller wants "clear
+  /// whatever size is set here" without first knowing what that size is.
+  AttributedText clearAttributionsNamed(String name, int start, int end) {
+    if (end <= start) return this;
+    final newSpans = <AttributionSpan>[];
+    for (final span in spans) {
+      if (span.attribution.name != name ||
+          span.end <= start ||
+          span.start >= end) {
+        newSpans.add(span);
+        continue;
+      }
+      if (span.start < start) newSpans.add(span.copyWith(end: start));
+      if (span.end > end) newSpans.add(span.copyWith(start: end));
+    }
+    return AttributedText(text, newSpans);
+  }
+
   AttributedText removeAttribution(Attribution a, int start, int end) {
     if (end <= start) return this;
     final newSpans = <AttributionSpan>[];

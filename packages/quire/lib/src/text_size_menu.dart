@@ -26,12 +26,28 @@ double _previewSize(double size) => (size * 0.75).clamp(15.0, 24.0);
 /// [PopupMenuItem] below — kept as one function so the two can't drift apart.
 double _itemHeight(double size) => (_previewSize(size) + 30).clamp(48.0, 60.0);
 
+/// Custom sizes are clamped to this range — wide enough for anything a note
+/// actually needs, narrow enough that +/- taps stay useful.
+const _minCustomSize = 8.0;
+const _maxCustomSize = 72.0;
+
+/// Height of the trailing "custom size" row, plus the divider above it.
+const _customRowHeight = 48.0;
+const _dividerHeight = 17.0; // PopupMenuDivider's default height.
+
+/// Sentinel `value` for the custom row's [PopupMenuItem] — see the
+/// `onSelected` wrapper in [TextSizeMenu.build].
+const _customRowValue = '_custom';
+
 /// Total height of the menu's content, plus the framework's own vertical
 /// menuPadding (8 top + 8 bottom — see [PopupMenuButtonState.menuPadding]).
 /// Used to anchor the menu above the button by exactly its own height, so it
 /// opens sitting on top of the button rather than below it.
 final double _menuHeight =
-    _steps.fold(0.0, (sum, step) => sum + _itemHeight(step.size)) + 16;
+    _steps.fold(0.0, (sum, step) => sum + _itemHeight(step.size)) +
+    _dividerHeight +
+    _customRowHeight +
+    16;
 
 /// Extra lift on top of [_menuHeight] so the menu doesn't sit flush against
 /// the toolbar's own rounded container — a hairline of visible gap reads as
@@ -64,9 +80,16 @@ class TextSizeMenu extends StatelessWidget {
       (s) => s.blockType == blockType,
       orElse: () => _steps.last,
     );
-    // Body is the resting state; anything else is worth flagging, the same
-    // way a lit IconButton flags an active attribution.
-    final raised = current.blockType != 'paragraph';
+    // An explicit fontSize attribution (set via the custom row below) always
+    // wins over the block type's size — it's what the renderer actually
+    // draws (see node_text_controller.dart's `fontSize` case). Falls back to
+    // the block default when there's no explicit size, including for a
+    // mixed selection (see `explicitFontSize`'s doc comment).
+    final explicitSize = controller.explicitFontSize;
+    final effectiveSize = explicitSize ?? current.size;
+    // Body-with-no-override is the resting state; anything else is worth
+    // flagging, the same way a lit IconButton flags an active attribution.
+    final raised = current.blockType != 'paragraph' || explicitSize != null;
 
     return PopupMenuButton<String>(
       tooltip: 'Text size',
@@ -87,8 +110,15 @@ class TextSizeMenu extends StatelessWidget {
       // default 8pt padding on top of it would make this control taller than
       // the icon buttons and stretch the whole bar.
       padding: EdgeInsets.zero,
-      onSelected: controller.applyBlockType,
-      itemBuilder: (context) => [
+      // The custom-size row (below) has no block type of its own — it's
+      // given the `_customRowValue` sentinel just so `PopupMenuButton<String>`
+      // has something to pop with when a tap lands outside its buttons, and
+      // this filters that sentinel out rather than treating it as a block
+      // type.
+      onSelected: (value) {
+        if (value != _customRowValue) controller.applyBlockType(value);
+      },
+      itemBuilder: (menuContext) => [
         for (final step in _steps)
           PopupMenuItem(
             value: step.blockType,
@@ -128,6 +158,76 @@ class TextSizeMenu extends StatelessWidget {
               ],
             ),
           ),
+        const PopupMenuDivider(),
+        // Custom sizing: the four named steps above are still block-type
+        // changes, this row is the only place that sets an explicit
+        // `fontSize` attribution. +/- nudge by 1pt; tapping the number opens
+        // a dialog for an exact value. Either action closes the menu (like
+        // picking a step above) so the toolbar pill's new value is visible
+        // right away.
+        PopupMenuItem(
+          value: _customRowValue,
+          height: _customRowHeight,
+          child: Row(
+            children: [
+              const SizedBox(width: 26),
+              Expanded(
+                child: Text(
+                  'Custom',
+                  style: TextStyle(color: scheme.onSurface),
+                ),
+              ),
+              IconButton(
+                key: const Key('customSizeDecrement'),
+                icon: const Icon(Icons.remove, size: 18),
+                tooltip: 'Smaller',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                onPressed: () {
+                  controller.setFontSize(
+                    (effectiveSize - 1)
+                        .clamp(_minCustomSize, _maxCustomSize)
+                        .toDouble(),
+                  );
+                  Navigator.pop(menuContext);
+                },
+              ),
+              InkWell(
+                key: const Key('customSizeValue'),
+                onTap: () {
+                  Navigator.pop(menuContext);
+                  _pickCustomSize(context, controller, effectiveSize);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Text(
+                    '${effectiveSize.round()}',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                key: const Key('customSizeIncrement'),
+                icon: const Icon(Icons.add, size: 18),
+                tooltip: 'Larger',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                onPressed: () {
+                  controller.setFontSize(
+                    (effectiveSize + 1)
+                        .clamp(_minCustomSize, _maxCustomSize)
+                        .toDouble(),
+                  );
+                  Navigator.pop(menuContext);
+                },
+              ),
+            ],
+          ),
+        ),
       ],
       // A 48pt row keeps the tap target legal while the pill itself stays
       // visually light next to the icon buttons either side of it.
@@ -153,7 +253,7 @@ class TextSizeMenu extends StatelessWidget {
                 // width — and everything after it in the toolbar — doesn't
                 // shift as the caret moves between blocks.
                 Text(
-                  '${current.size.toInt()}',
+                  '${effectiveSize.round()}',
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: raised ? scheme.primary : scheme.onSurface,
                   ),
@@ -169,6 +269,50 @@ class TextSizeMenu extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Opens a small dialog for typing an exact custom point size, clamped to
+/// [_minCustomSize]-[_maxCustomSize], and applies it via
+/// [QuireEditorController.setFontSize]. Cancelling or entering something
+/// unparsable leaves the size unchanged.
+Future<void> _pickCustomSize(
+  BuildContext context,
+  QuireEditorController controller,
+  double current,
+) async {
+  final textController = TextEditingController(text: '${current.round()}');
+  final entered = await showDialog<double>(
+    context: context,
+    builder: (dialogContext) {
+      void submit() {
+        final parsed = double.tryParse(textController.text);
+        Navigator.pop(dialogContext, parsed);
+      }
+
+      return AlertDialog(
+        title: const Text('Custom size'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(suffixText: 'pt'),
+          onSubmitted: (_) => submit(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(onPressed: submit, child: const Text('Apply')),
+        ],
+      );
+    },
+  );
+  if (entered != null) {
+    controller.setFontSize(
+      entered.clamp(_minCustomSize, _maxCustomSize).toDouble(),
     );
   }
 }

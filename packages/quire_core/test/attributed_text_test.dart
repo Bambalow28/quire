@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:quire_core/quire_core.dart';
 import 'package:test/test.dart';
 
@@ -131,5 +133,90 @@ void main() {
     ]);
     final restored = AttributedText.fromJson(text.toJson());
     expect(restored, text);
+  });
+
+  test('json round-trip preserves a fontSize attribution and its value', () {
+    final text = AttributedText('hello world', [
+      const AttributionSpan(
+        Attribution('fontSize', value: {'size': 24.0}),
+        0,
+        5,
+      ),
+    ]);
+    final restored = AttributedText.fromJson(text.toJson());
+    expect(restored, text);
+    expect(restored.attributionsAt(0), {
+      const Attribution('fontSize', value: {'size': 24.0}),
+    });
+  });
+
+  test(
+    'a TextNode with a fontSize attribution survives a real dart:convert '
+    'jsonEncode/jsonDecode round trip, same as notesync persisting a note',
+    () {
+      final node = TextNode(
+        id: 'a',
+        text: AttributedText('hello world', [
+          const AttributionSpan(
+            Attribution('fontSize', value: {'size': 24.0}),
+            0,
+            5,
+          ),
+        ]),
+      );
+      final encoded = jsonEncode(node.toJson());
+      final decoded = TextNode.fromJson(
+        jsonDecode(encoded) as Map<String, Object?>,
+      );
+      expect(decoded.text, node.text);
+      expect(decoded.text.attributionsAt(0), {
+        const Attribution('fontSize', value: {'size': 24.0}),
+      });
+    },
+  );
+
+  group('clearAttributionsNamed', () {
+    test('removes matching spans by name regardless of their value', () {
+      final text = AttributedText('hello world', [
+        const AttributionSpan(
+          Attribution('fontSize', value: {'size': 32}),
+          0,
+          5,
+        ),
+      ]);
+      final result = text.clearAttributionsNamed('fontSize', 0, 5);
+      expect(result.attributionsAt(0), isEmpty);
+    });
+
+    test('only trims the overlapping part of a wider span', () {
+      final text = AttributedText('hello world', [
+        const AttributionSpan(
+          Attribution('fontSize', value: {'size': 32}),
+          0,
+          11,
+        ),
+      ]);
+      final result = text.clearAttributionsNamed('fontSize', 3, 6);
+      expect(result.attributionsAt(0), {
+        const Attribution('fontSize', value: {'size': 32}),
+      });
+      expect(result.attributionsAt(4), isEmpty);
+      expect(result.attributionsAt(9), {
+        const Attribution('fontSize', value: {'size': 32}),
+      });
+    });
+
+    test('leaves other attribution names untouched', () {
+      final text = AttributedText('hello world', [
+        AttributionSpan(bold, 0, 5),
+        const AttributionSpan(
+          Attribution('fontSize', value: {'size': 32}),
+          0,
+          5,
+        ),
+      ]);
+      final result = text.clearAttributionsNamed('fontSize', 0, 5);
+      expect(result.attributionsAt(0), {bold});
+    });
   });
 }

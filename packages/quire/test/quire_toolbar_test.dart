@@ -119,7 +119,9 @@ void main() {
       DocumentPosition('a', const TextNodePosition(0)),
     );
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: QuireToolbar(controller: controller))),
+      MaterialApp(
+        home: Scaffold(body: QuireToolbar(controller: controller)),
+      ),
     );
     TextNode node() => controller.document.getNodeById('a') as TextNode;
 
@@ -156,7 +158,9 @@ void main() {
       DocumentPosition('a', const TextNodePosition(0)),
     );
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: QuireToolbar(controller: controller))),
+      MaterialApp(
+        home: Scaffold(body: QuireToolbar(controller: controller)),
+      ),
     );
     TextNode node() => controller.document.getNodeById('a') as TextNode;
 
@@ -374,6 +378,122 @@ void main() {
       // shouldn't have, so the editor's field is still the one that has it.
       expect(editorFocus.hasFocus, isTrue);
     });
+
+    testWidgets(
+      'the custom size row nudges the pill by 1pt and sets an explicit '
+      'fontSize attribution',
+      (tester) async {
+        final controller = await pumpWithCaret(tester);
+
+        await tester.tap(find.text('16'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('customSizeIncrement')));
+        await tester.pumpAndSettle();
+
+        // The pill now reports the explicit size, not the block default.
+        expect(find.text('17'), findsOneWidget);
+        expect(
+          controller.composer.composingAttributions,
+          contains(const Attribution('fontSize', value: {'size': 17.0})),
+        );
+
+        await tester.tap(find.text('17'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('customSizeDecrement')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('16'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('customSizeDecrement')));
+        await tester.pumpAndSettle();
+
+        expect(find.text('15'), findsOneWidget);
+      },
+    );
+
+    testWidgets('the custom size dialog applies an exact typed value', (
+      tester,
+    ) async {
+      final controller = await pumpWithCaret(tester);
+
+      await tester.tap(find.text('16'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('customSizeValue')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), '48');
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('48'), findsOneWidget);
+      expect(
+        controller.composer.composingAttributions,
+        contains(const Attribution('fontSize', value: {'size': 48.0})),
+      );
+    });
+
+    testWidgets('the custom size dialog clamps outside the 8-72 range', (
+      tester,
+    ) async {
+      final controller = await pumpWithCaret(tester);
+
+      await tester.tap(find.text('16'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('customSizeValue')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField), '999');
+      await tester.tap(find.text('Apply'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('72'), findsOneWidget);
+      expect(
+        controller.composer.composingAttributions,
+        contains(const Attribution('fontSize', value: {'size': 72.0})),
+      );
+    });
+
+    testWidgets(
+      'a mixed-size selection degrades to the block default rather than '
+      'crashing or picking one side',
+      (tester) async {
+        final controller = QuireEditorController(
+          document: MutableDocument(
+            nodes: [
+              TextNode(
+                id: 'a',
+                text: AttributedText('hello world', [
+                  const AttributionSpan(
+                    Attribution('fontSize', value: {'size': 20.0}),
+                    0,
+                    5,
+                  ),
+                  const AttributionSpan(
+                    Attribution('fontSize', value: {'size': 40.0}),
+                    5,
+                    11,
+                  ),
+                ]),
+              ),
+            ],
+          ),
+        );
+        controller.focusNode('a');
+        controller.composer.selection = const DocumentSelection(
+          base: DocumentPosition('a', TextNodePosition(0)),
+          extent: DocumentPosition('a', TextNodePosition(11)),
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(body: QuireToolbar(controller: controller)),
+          ),
+        );
+
+        expect(tester.takeException(), isNull);
+        // Neither of the two explicit sizes wins — the pill falls back to
+        // the block type's own default (Body = 16).
+        expect(find.text('16'), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'with the keyboard up, the menu opens above the button instead of '

@@ -232,84 +232,167 @@ void main() {
     },
   );
 
-  test(
-    'ChangeLineSpacingRequest applies, clamps, and undo restores it',
-    () {
-      final doc = MutableDocument(nodes: [_para('a', 'x')]);
-      final composer = DocumentComposer(
-        selection: DocumentSelection.collapsed(
-          DocumentPosition('a', const TextNodePosition(0)),
+  test('ChangeLineSpacingRequest applies, clamps, and undo restores it', () {
+    final doc = MutableDocument(nodes: [_para('a', 'x')]);
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    final editor = Editor(
+      doc,
+      composer,
+      requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+    );
+    final history = EditHistory(editor);
+
+    expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.15);
+
+    history.execute([ChangeLineSpacingRequest(1.5)]);
+    expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.5);
+
+    editor.execute([ChangeLineSpacingRequest(10.0)]);
+    expect((doc.getNodeById('a') as TextNode).lineSpacing, 2.5); // clamped
+    editor.execute([ChangeLineSpacingRequest(-1.0)]);
+    expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0); // clamped
+
+    history.undo();
+    expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.15);
+  });
+
+  test('SetFontSizeRequest sets a fontSize span over the selection, replacing '
+      'any existing one, and undo restores it', () {
+    final doc = MutableDocument(nodes: [_para('a', 'hello world')]);
+    final composer = DocumentComposer(
+      selection: DocumentSelection(
+        base: DocumentPosition('a', const TextNodePosition(0)),
+        extent: DocumentPosition('a', const TextNodePosition(11)),
+      ),
+    );
+    final editor = Editor(
+      doc,
+      composer,
+      requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+    );
+    final history = EditHistory(editor);
+
+    history.execute([SetFontSizeRequest(32)]);
+    var spans = (doc.getNodeById('a') as TextNode).text.spans;
+    expect(spans, [
+      const AttributionSpan(
+        Attribution('fontSize', value: {'size': 32}),
+        0,
+        11,
+      ),
+    ]);
+
+    // Setting a different size over an overlapping range replaces the old
+    // span outright rather than leaving two overlapping fontSize spans.
+    history.execute([
+      ChangeSelectionRequest(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('a', const TextNodePosition(5)),
         ),
-      );
-      final editor = Editor(
-        doc,
-        composer,
-        requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
-      );
-      final history = EditHistory(editor);
+      ),
+    ]);
+    history.execute([SetFontSizeRequest(24)]);
+    spans = (doc.getNodeById('a') as TextNode).text.spans;
+    expect(spans, [
+      const AttributionSpan(Attribution('fontSize', value: {'size': 24}), 0, 5),
+      const AttributionSpan(
+        Attribution('fontSize', value: {'size': 32}),
+        5,
+        11,
+      ),
+    ]);
 
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.15);
-
-      history.execute([ChangeLineSpacingRequest(1.5)]);
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.5);
-
-      editor.execute([ChangeLineSpacingRequest(10.0)]);
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 2.5); // clamped
-      editor.execute([ChangeLineSpacingRequest(-1.0)]);
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.0); // clamped
-
-      history.undo();
-      expect((doc.getNodeById('a') as TextNode).lineSpacing, 1.15);
-    },
-  );
-
-  test(
-    'DeleteSelectionRequest nulls the selection when deleting the sole '
-    '(non-text) node in the document',
-    () {
-      final doc = MutableDocument(nodes: [HorizontalRuleNode(id: 'hr')]);
-      final composer = DocumentComposer(
-        selection: const DocumentSelection(
-          base: DocumentPosition('hr', UpstreamDownstreamNodePosition.upstream()),
-          extent: DocumentPosition(
-            'hr',
-            UpstreamDownstreamNodePosition.downstream(),
-          ),
+    // Clearing removes it regardless of the value it carried.
+    history.execute([
+      ChangeSelectionRequest(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('a', const TextNodePosition(11)),
         ),
-      );
-      final editor = _editor(doc, composer);
+      ),
+    ]);
+    history.execute([SetFontSizeRequest(null)]);
+    expect((doc.getNodeById('a') as TextNode).text.spans, isEmpty);
 
-      editor.execute([DeleteSelectionRequest()]);
+    history.undo();
+    expect((doc.getNodeById('a') as TextNode).text.spans, [
+      const AttributionSpan(Attribution('fontSize', value: {'size': 24}), 0, 5),
+      const AttributionSpan(
+        Attribution('fontSize', value: {'size': 32}),
+        5,
+        11,
+      ),
+    ]);
+  });
 
-      expect(doc.nodes, isEmpty);
-      expect(composer.selection, isNull);
-    },
-  );
+  test('SetFontSizeRequest on a collapsed selection arms/clears '
+      'composingAttributions', () {
+    final doc = MutableDocument(nodes: [_para('a', 'hello')]);
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(2)),
+      ),
+    );
+    final editor = _editor(doc, composer);
 
-  test(
-    'DeleteSelectionRequest nulls the selection when deleting a selection '
-    'spanning the entire document across two non-text nodes',
-    () {
-      final doc = MutableDocument(
-        nodes: [HorizontalRuleNode(id: 'a'), HorizontalRuleNode(id: 'b')],
-      );
-      final composer = DocumentComposer(
-        selection: const DocumentSelection(
-          base: DocumentPosition('a', UpstreamDownstreamNodePosition.upstream()),
-          extent: DocumentPosition(
-            'b',
-            UpstreamDownstreamNodePosition.downstream(),
-          ),
+    editor.execute([SetFontSizeRequest(20)]);
+    expect(composer.composingAttributions, {
+      const Attribution('fontSize', value: {'size': 20}),
+    });
+
+    editor.execute([SetFontSizeRequest(null)]);
+    expect(composer.composingAttributions, isEmpty);
+  });
+
+  test('DeleteSelectionRequest nulls the selection when deleting the sole '
+      '(non-text) node in the document', () {
+    final doc = MutableDocument(nodes: [HorizontalRuleNode(id: 'hr')]);
+    final composer = DocumentComposer(
+      selection: const DocumentSelection(
+        base: DocumentPosition('hr', UpstreamDownstreamNodePosition.upstream()),
+        extent: DocumentPosition(
+          'hr',
+          UpstreamDownstreamNodePosition.downstream(),
         ),
-      );
-      final editor = _editor(doc, composer);
+      ),
+    );
+    final editor = _editor(doc, composer);
 
-      editor.execute([DeleteSelectionRequest()]);
+    editor.execute([DeleteSelectionRequest()]);
 
-      expect(doc.nodes, isEmpty);
-      expect(composer.selection, isNull);
-    },
-  );
+    expect(doc.nodes, isEmpty);
+    expect(composer.selection, isNull);
+  });
+
+  test('DeleteSelectionRequest nulls the selection when deleting a selection '
+      'spanning the entire document across two non-text nodes', () {
+    final doc = MutableDocument(
+      nodes: [
+        HorizontalRuleNode(id: 'a'),
+        HorizontalRuleNode(id: 'b'),
+      ],
+    );
+    final composer = DocumentComposer(
+      selection: const DocumentSelection(
+        base: DocumentPosition('a', UpstreamDownstreamNodePosition.upstream()),
+        extent: DocumentPosition(
+          'b',
+          UpstreamDownstreamNodePosition.downstream(),
+        ),
+      ),
+    );
+    final editor = _editor(doc, composer);
+
+    editor.execute([DeleteSelectionRequest()]);
+
+    expect(doc.nodes, isEmpty);
+    expect(composer.selection, isNull);
+  });
 
   test('InsertNodeRequest and DeleteNodeRequest', () {
     final doc = MutableDocument(nodes: [_para('a', 'x')]);

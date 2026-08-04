@@ -926,4 +926,184 @@ void main() {
       expect(startOffset, greaterThan(0));
     },
   );
+
+  testWidgets(
+    'holding a document-level drag at the bottom viewport edge autoscrolls '
+    'and keeps extending the selection into content that was off-screen '
+    'when the drag began',
+    (tester) async {
+      // Long-wrapping paragraphs so only a handful fit in the 600-tall
+      // viewport — a short one-line-per-node document would fit 25+ nodes
+      // and never need to scroll at all.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: List.generate(
+            25,
+            (i) => TextNode(
+              id: 'p$i',
+              text: AttributedText(
+                'paragraph number $i with enough extra text in it to wrap '
+                'across multiple lines and add real height to the document',
+              ),
+            ),
+          ),
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      final viewport = tester.getRect(find.byType(QuireEditor));
+      final start =
+          tester.getTopLeft(find.byType(EditableText).first) +
+          const Offset(4, 4);
+      // A few px above the very bottom edge — inside the autoscroll margin.
+      final holdPoint = Offset(start.dx, viewport.bottom - 5);
+
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable).first,
+      );
+
+      final gesture = await tester.startGesture(
+        start,
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await gesture.moveTo(holdPoint);
+      await tester.pump();
+
+      final offsetBeforeHold = scrollable.position.pixels;
+
+      // Hold still at the edge — nothing else moves the finger from here,
+      // so any further scrolling/selection growth must come from the
+      // autoscroll ticker alone, not from a fresh pointer move.
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      expect(scrollable.position.pixels, greaterThan(offsetBeforeHold));
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (_, endPos) = selection!.normalize(controller.document);
+      final endIndex = controller.document.getNodeIndexById(endPos.nodeId);
+      // Well beyond what the initial 600pt viewport could show starting
+      // from node 0 — proves the selection reached content that was
+      // off-screen when the drag started, not just that the view scrolled.
+      expect(endIndex, greaterThan(4));
+
+      await gesture.up();
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'holding a selection-handle drag at the bottom viewport edge '
+    'autoscrolls too, and keeps widening the selection while the finger '
+    'holds still',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: List.generate(
+            25,
+            (i) => TextNode(
+              id: 'p$i',
+              text: AttributedText(
+                'paragraph number $i with enough extra text in it to wrap '
+                'across multiple lines and add real height to the document',
+              ),
+            ),
+          ),
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('p0', const TextNodePosition(0)),
+          extent: DocumentPosition('p1', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+      expect(endHandle(), findsOneWidget);
+
+      final viewport = tester.getRect(find.byType(QuireEditor));
+      final scrollable = tester.state<ScrollableState>(
+        find.byType(Scrollable).first,
+      );
+      final offsetBeforeHold = scrollable.position.pixels;
+
+      final grab = tester.getCenter(endHandle());
+      final holdPoint = Offset(grab.dx, viewport.bottom - 5);
+      final gesture = await tester.startGesture(grab);
+      await tester.pump();
+      await gesture.moveTo(holdPoint);
+      await tester.pump();
+
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      expect(scrollable.position.pixels, greaterThan(offsetBeforeHold));
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      // The start handle was never touched.
+      expect(startPos, DocumentPosition('p0', const TextNodePosition(0)));
+      final endIndex = controller.document.getNodeIndexById(endPos.nodeId);
+      expect(endIndex, greaterThan(4));
+
+      await gesture.up();
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'a long-press-then-drag extends the selection by whole words, snapping '
+    'to word boundaries mid-drag rather than the exact character under the '
+    'finger',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('alpha beta gamma delta')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      final renderEditable = tester
+          .state<EditableTextState>(find.byType(EditableText).first)
+          .renderEditable;
+      Offset forOffset(int modelOffset) {
+        final rect = renderEditable.getLocalRectForCaret(
+          TextPosition(offset: modelOffset + 1),
+        );
+        return renderEditable.localToGlobal(rect.center);
+      }
+
+      // Long-press in the middle of "beta" (word boundaries 6-10).
+      final gesture = await tester.startGesture(forOffset(8));
+      await tester.pump(const Duration(milliseconds: 600));
+
+      var selection = controller.composer.selection!;
+      var (startPos, endPos) = selection.normalize(controller.document);
+      expect((startPos.nodePosition as TextNodePosition).offset, 6);
+      expect((endPos.nodePosition as TextNodePosition).offset, 10);
+
+      // Drag to offset 13 — the middle of "gamma" (word boundaries 11-16),
+      // not itself a word boundary.
+      await gesture.moveTo(forOffset(13));
+      await tester.pump();
+
+      selection = controller.composer.selection!;
+      (startPos, endPos) = selection.normalize(controller.document);
+      // Snapped to "gamma"'s end (16), not the touched offset (13); "beta"'s
+      // start (6) stays the fixed anchor.
+      expect((startPos.nodePosition as TextNodePosition).offset, 6);
+      expect((endPos.nodePosition as TextNodePosition).offset, 16);
+
+      await gesture.up();
+      await tester.pump();
+    },
+  );
 }

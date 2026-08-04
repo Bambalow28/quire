@@ -170,29 +170,56 @@ class _QuireEditorState extends State<QuireEditor> {
   /// position doesn't work.
   Offset? _dragTouchOffset;
 
+  /// The most recent raw pointer position for whichever drag (document-level
+  /// or a selection handle) is in progress, re-read by [_onAutoscrollTick]
+  /// on every tick even when the finger itself hasn't moved — the content
+  /// sliding under a still finger changes what [_positionAt] resolves to,
+  /// so holding still at the viewport edge must keep extending the
+  /// selection, not just keep scrolling. `null` when no drag is active.
+  Offset? _dragGlobalPosition;
+
+  /// Set when the drag in progress was promoted from a long-press (see the
+  /// touch-hold timer in [_handlePointerDown]) — the (start, end) of the word
+  /// that long-press originally selected. Non-null only for that case, so a
+  /// plain mouse/handle drag stays character-precise; see
+  /// [_wordSnappedSelection] for how it's used to extend BY WHOLE WORDS the
+  /// way native iOS/Android long-press-drag does.
+  (DocumentPosition, DocumentPosition)? _wordDragAnchor;
+
+  /// Runs while a drag (document-level or handle) has the finger within
+  /// [_autoscrollMargin] of the viewport's top/bottom edge — see
+  /// [_syncAutoscroll]. `null` when no autoscroll is needed right now.
+  Timer? _autoscrollTimer;
+
+  static const _autoscrollMargin = 40.0;
+  static const _autoscrollMaxSpeed = 800.0; // px/sec, at full margin depth
+  static const _autoscrollTick = Duration(milliseconds: 16);
+
   bool _isOnSelectionHandle(Offset globalPosition) =>
       (_startHandleHitRect?.contains(globalPosition) ?? false) ||
       (_endHandleHitRect?.contains(globalPosition) ?? false);
 
-  bool get _hasMultiNodeSelection {
+  /// Whether quire is currently drawing selection handles for anything —
+  /// single-node or multi-node, see [_buildSelectionHandles] — so the
+  /// scroll listener below knows whether their positions need refreshing.
+  bool get _hasVisibleSelectionHandles {
     final selection = widget.controller.composer.selection;
-    return selection != null &&
-        !selection.isCollapsed &&
-        selection.base.nodeId != selection.extent.nodeId;
+    return selection != null && !selection.isCollapsed;
   }
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onModelChanged);
-    // The overlay for a cross-node selection is painted with rects computed
-    // fresh from each field's live (post-scroll) render position — but
-    // nothing else here triggers a rebuild on scroll, so without this the
-    // overlay would go stale under the moving content.
-    // Only when a cross-node selection is actually on screen: otherwise this
-    // would rebuild every field on every scroll frame for nothing.
+    // The overlay/handles are painted from each field's live (post-scroll)
+    // render position — but nothing else here triggers a rebuild on scroll,
+    // so without this they'd go stale under the moving content. This also
+    // covers autoscroll-while-dragging (see `_syncAutoscroll`), which moves
+    // the scroll offset out from under a selection handle drag.
+    // Only when a selection with handles is actually on screen: otherwise
+    // this would rebuild every field on every scroll frame for nothing.
     _scrollController.addListener(() {
-      if (_hasMultiNodeSelection) setState(() {});
+      if (_hasVisibleSelectionHandles) setState(() {});
     });
     _syncAndPush();
   }
@@ -207,6 +234,7 @@ class _QuireEditorState extends State<QuireEditor> {
       focusNode.dispose();
     }
     _touchHoldTimer?.cancel();
+    _autoscrollTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -260,7 +288,7 @@ class _QuireEditorState extends State<QuireEditor> {
     // GestureDetector pan recognizer, so it never has to fight the
     // CustomScrollView's own vertical-drag recognizer for the gesture arena
     // — it just observes the same pointer stream. Autoscroll while dragging
-    // past the viewport edge is out of scope.
+    // past the viewport edge is handled by `_syncAutoscroll`/`_onAutoscrollTick`.
     final content = Listener(
       onPointerDown: _handlePointerDown,
       onPointerMove: _handlePointerMove,
@@ -538,11 +566,17 @@ class _QuireEditorState extends State<QuireEditor> {
         final held = _positionAt(_touchDownAt!);
         _dragBase = held;
         // Long-press selects the word first, the way iOS/Android do; a drag
-        // from here then extends that selection.
+        // from here then extends that selection BY WHOLE WORDS (see
+        // `_wordSnappedSelection`) — remember the word it selected so
+        // `_extendDocumentDragTo` can snap to it.
         if (held != null) {
-          _selectWordAt(
-            held.nodeId,
-            (held.nodePosition as TextNodePosition).offset,
+          final offset = (held.nodePosition as TextNodePosition).offset;
+          _selectWordAt(held.nodeId, offset);
+          final modelText = _controllers[held.nodeId]?.attributedText.text ?? '';
+          final (wordStart, wordEnd) = _wordBoundaryIn(modelText, offset);
+          _wordDragAnchor = (
+            DocumentPosition(held.nodeId, TextNodePosition(wordStart)),
+            DocumentPosition(held.nodeId, TextNodePosition(wordEnd)),
           );
         }
       });
@@ -591,6 +625,9 @@ class _QuireEditorState extends State<QuireEditor> {
     _touchDownAt = null;
     _dragBase = null;
     _pointerDownOnHandle = false;
+    _wordDragAnchor = null;
+    _dragGlobalPosition = null;
+    _stopAutoscroll();
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
@@ -602,13 +639,78 @@ class _QuireEditorState extends State<QuireEditor> {
       _endDrag();
       return;
     }
+    if (_dragBase == null) return;
+    _dragGlobalPosition = event.position;
+    _syncAutoscroll();
+    _extendDocumentDragTo(event.position);
+  }
+
+  /// Extends the document-level drag started at [_dragBase] to
+  /// [globalPosition] — character-precise for a plain drag, or snapped to
+  /// whole words (see [_wordSnappedSelection]) when this drag was promoted
+  /// from a long-press (`_wordDragAnchor` non-null). Also what
+  /// [_onAutoscrollTick] re-runs every tick so the selection keeps growing
+  /// while the finger holds still at the viewport edge.
+  void _extendDocumentDragTo(Offset globalPosition) {
     final base = _dragBase;
     if (base == null) return;
-    final extent = _positionAt(event.position);
+    final extent = _positionAt(globalPosition);
     if (extent == null) return;
-    widget.controller.changeSelection(
-      DocumentSelection(base: base, extent: extent),
+    final wordAnchor = _wordDragAnchor;
+    final selection = wordAnchor == null
+        ? DocumentSelection(base: base, extent: extent)
+        : _wordSnappedSelection(wordAnchor, extent);
+    widget.controller.changeSelection(selection);
+  }
+
+  /// -1 if [a] is before [b] in document order, 1 if after, 0 if equal.
+  int _compareDocumentPositions(DocumentPosition a, DocumentPosition b) {
+    final document = widget.controller.document;
+    final nodeCompare = document
+        .getNodeIndexById(a.nodeId)
+        .compareTo(document.getNodeIndexById(b.nodeId));
+    if (nodeCompare != 0) return nodeCompare;
+    final aOffset = (a.nodePosition as TextNodePosition).offset;
+    final bOffset = (b.nodePosition as TextNodePosition).offset;
+    return aOffset.compareTo(bOffset);
+  }
+
+  /// The word boundary at [position], as a `(start, end)` pair of
+  /// [DocumentPosition]s within [position]'s own node.
+  (DocumentPosition, DocumentPosition) _wordPositionsAt(
+    DocumentPosition position,
+  ) {
+    final modelText = _controllers[position.nodeId]?.attributedText.text ?? '';
+    final offset = (position.nodePosition as TextNodePosition).offset;
+    final (start, end) = _wordBoundaryIn(modelText, offset);
+    return (
+      DocumentPosition(position.nodeId, TextNodePosition(start)),
+      DocumentPosition(position.nodeId, TextNodePosition(end)),
     );
+  }
+
+  /// Native iOS/Android long-press-drag behaviour: once a long-press has
+  /// selected a word (`anchorWord`), continuing to drag extends the
+  /// selection BY WHOLE WORDS rather than by exact character position —
+  /// dragging past the anchor word's end keeps its START fixed and widens to
+  /// the end of the word under [dragPosition]; dragging past its start keeps
+  /// the END fixed and widens to that word's start; staying inside the
+  /// anchor word itself leaves the selection exactly as the long-press left
+  /// it.
+  DocumentSelection _wordSnappedSelection(
+    (DocumentPosition, DocumentPosition) anchorWord,
+    DocumentPosition dragPosition,
+  ) {
+    final (anchorStart, anchorEnd) = anchorWord;
+    if (_compareDocumentPositions(dragPosition, anchorStart) < 0) {
+      final (dragStart, _) = _wordPositionsAt(dragPosition);
+      return DocumentSelection(base: anchorEnd, extent: dragStart);
+    }
+    if (_compareDocumentPositions(dragPosition, anchorEnd) > 0) {
+      final (_, dragEnd) = _wordPositionsAt(dragPosition);
+      return DocumentSelection(base: anchorStart, extent: dragEnd);
+    }
+    return DocumentSelection(base: anchorStart, extent: anchorEnd);
   }
 
   /// Rects (in this editor's own coordinate space) covering every node a
@@ -672,6 +774,16 @@ class _QuireEditorState extends State<QuireEditor> {
         final bottomRight = editorBox.globalToLocal(
           renderEditable.localToGlobal(rect.bottomRight),
         );
+        // Same guard as `_caretRectAt`: a node scrolled far enough past the
+        // SliverList's cache extent (now reachable via autoscroll) can hand
+        // back NaN geometry instead of throwing — skip that box rather than
+        // painting a NaN rect.
+        if (!topLeft.dx.isFinite ||
+            !topLeft.dy.isFinite ||
+            !bottomRight.dx.isFinite ||
+            !bottomRight.dy.isFinite) {
+          continue;
+        }
         rects.add(Rect.fromPoints(topLeft, bottomRight));
       }
     }
@@ -706,6 +818,20 @@ class _QuireEditorState extends State<QuireEditor> {
     final bottomRight = editorBox.globalToLocal(
       renderEditable.localToGlobal(caretRect.bottomRight),
     );
+    // A node that has scrolled far enough past the SliverList's cache
+    // extent can stay `attached`/`hasSize` (see `_laidOutEditable`) while
+    // its paint transform is no longer invertible — `localToGlobal`
+    // /`globalToLocal` then hand back NaN instead of throwing. Autoscroll
+    // can now drag a selection's fixed endpoint that far away, so this is
+    // reachable in practice (it wasn't before autoscroll existed): treat it
+    // the same as "not laid out" rather than handing NaN geometry to a
+    // handle widget.
+    if (!topLeft.dx.isFinite ||
+        !topLeft.dy.isFinite ||
+        !bottomRight.dx.isFinite ||
+        !bottomRight.dy.isFinite) {
+      return null;
+    }
     return Rect.fromPoints(topLeft, bottomRight);
   }
 
@@ -776,7 +902,10 @@ class _QuireEditorState extends State<QuireEditor> {
           final owns = isStart
               ? _startHandlePointerId == event.pointer
               : _endHandlePointerId == event.pointer;
-          if (owns) onDragUpdate(event.position);
+          if (!owns) return;
+          _dragGlobalPosition = event.position;
+          _syncAutoscroll();
+          onDragUpdate(event.position);
         },
         onPointerUp: (event) {
           if (isStart) {
@@ -887,6 +1016,102 @@ class _QuireEditorState extends State<QuireEditor> {
     widget.controller.changeSelection(
       DocumentSelection(base: anchor, extent: newPosition),
     );
+  }
+
+  // --- Autoscroll while dragging past the viewport edge ------------------
+
+  /// This editor's own on-screen rect — while it sits inside a
+  /// `CustomScrollView`, the `Stack` this key is on is given the viewport's
+  /// own (unscrolled) size, so its global rect IS the viewport, and is what
+  /// [_autoscrollVelocityFor] measures the finger's distance from.
+  Rect? _viewportRect() {
+    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (editorBox == null || !editorBox.attached) return null;
+    return editorBox.localToGlobal(Offset.zero) & editorBox.size;
+  }
+
+  /// Scroll speed (px/sec, signed — negative is up) for a finger at [dy],
+  /// ramping from 0 at [_autoscrollMargin] in from the edge to
+  /// [_autoscrollMaxSpeed] at (or past) the edge itself. 0 when [dy] isn't
+  /// within the margin of either edge.
+  double _autoscrollVelocityFor(double dy, Rect viewport) {
+    final topDepth = viewport.top + _autoscrollMargin - dy;
+    if (topDepth > 0) {
+      return -_autoscrollMaxSpeed *
+          (topDepth.clamp(0.0, _autoscrollMargin) / _autoscrollMargin);
+    }
+    final bottomDepth = dy - (viewport.bottom - _autoscrollMargin);
+    if (bottomDepth > 0) {
+      return _autoscrollMaxSpeed *
+          (bottomDepth.clamp(0.0, _autoscrollMargin) / _autoscrollMargin);
+    }
+    return 0;
+  }
+
+  /// Starts (or stops) [_autoscrollTimer] to match whether the drag's
+  /// current position is in the autoscroll margin right now — called from
+  /// every document-level and handle drag move. The timer itself just keeps
+  /// re-running [_onAutoscrollTick], which re-measures the margin on every
+  /// tick, so it self-stops once the finger moves back toward the middle
+  /// (or lifts, via [_endDrag]).
+  void _syncAutoscroll() {
+    final position = _dragGlobalPosition;
+    final viewport = position == null ? null : _viewportRect();
+    if (position == null ||
+        viewport == null ||
+        _autoscrollVelocityFor(position.dy, viewport) == 0) {
+      _stopAutoscroll();
+      return;
+    }
+    _autoscrollTimer ??= Timer.periodic(
+      _autoscrollTick,
+      (_) => _onAutoscrollTick(),
+    );
+  }
+
+  void _stopAutoscroll() {
+    _autoscrollTimer?.cancel();
+    _autoscrollTimer = null;
+  }
+
+  /// One autoscroll step: nudges the scroll offset toward whichever edge the
+  /// finger is near, then re-runs the selection update for whichever drag is
+  /// active at the SAME finger position — that second part is what keeps the
+  /// selection growing while the finger holds still at the edge, instead of
+  /// only the content scrolling underneath it.
+  void _onAutoscrollTick() {
+    if (!mounted || !_scrollController.hasClients) {
+      _stopAutoscroll();
+      return;
+    }
+    final position = _dragGlobalPosition;
+    final viewport = position == null ? null : _viewportRect();
+    if (position == null || viewport == null) {
+      _stopAutoscroll();
+      return;
+    }
+    final velocity = _autoscrollVelocityFor(position.dy, viewport);
+    if (velocity == 0) {
+      _stopAutoscroll();
+      return;
+    }
+    final scrollPosition = _scrollController.position;
+    final newOffset = (scrollPosition.pixels +
+            velocity * _autoscrollTick.inMilliseconds / 1000)
+        .clamp(scrollPosition.minScrollExtent, scrollPosition.maxScrollExtent);
+    if (newOffset != scrollPosition.pixels) _scrollController.jumpTo(newOffset);
+    _updateDragSelectionAt(position);
+  }
+
+  /// Re-runs whichever drag's selection update is active (document-level or
+  /// a handle) at [globalPosition] — shared by [_onAutoscrollTick] so a still
+  /// finger at the viewport edge keeps extending the selection.
+  void _updateDragSelectionAt(Offset globalPosition) {
+    if (_dragBase != null) {
+      _extendDocumentDragTo(globalPosition);
+    } else if (_dragAnchor != null) {
+      _dragSelectionHandle(globalPosition);
+    }
   }
 
   // --- Controller/focus-node bookkeeping ----------------------------------
@@ -1151,6 +1376,21 @@ class _QuireEditorState extends State<QuireEditor> {
 
     final selection = controller.selection;
     if (!selection.isValid) return;
+
+    // With a cross-node selection active, this field only ever holds a
+    // stale local caret (see `_pushModelToControllers`) — a selection-only
+    // report from it (e.g. the platform repositioning this field's own
+    // caret) carries no real information about the document-wide selection
+    // and must not overwrite it. Without this guard, that stale report
+    // collapses `composer.selection` to a single point inside this node
+    // right before a soft-keyboard delete arrives, so the delete only
+    // removes one character here instead of the whole selection.
+    final docSelection = widget.controller.composer.selection;
+    if (docSelection != null &&
+        docSelection.base.nodeId != docSelection.extent.nodeId) {
+      return;
+    }
+
     // Field offsets, clamped into the model's own length — with the
     // sentinel in place, an empty node's field selection sits at 0 or 1
     // (either side of the zero-width space) while the only valid model
