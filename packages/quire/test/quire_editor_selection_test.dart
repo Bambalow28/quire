@@ -1,8 +1,13 @@
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderEditable;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
+
+/// Mirrors `_handleKnobDiameter` in quire_editor.dart — the knob is drawn at
+/// the very top of the start handle's rect, and that's where a finger lands.
+const _handleKnobDiameter = 14.0;
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -375,7 +380,8 @@ void main() {
   Finder endHandle() => find.byKey(const ValueKey('quire-end-handle'));
 
   testWidgets(
-    'selection handles only appear for a non-collapsed multi-node selection',
+    'selection handles appear for any non-collapsed selection, single-node '
+    'or multi-node, but not for no selection or a collapsed one',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -401,7 +407,8 @@ void main() {
       expect(startHandle(), findsNothing);
       expect(endHandle(), findsNothing);
 
-      // Non-collapsed, but confined to a single node.
+      // Non-collapsed, confined to a single node — native handles are
+      // disabled, so quire's own handles must cover this case too.
       controller.changeSelection(
         DocumentSelection(
           base: DocumentPosition('a', const TextNodePosition(0)),
@@ -409,8 +416,8 @@ void main() {
         ),
       );
       await tester.pump();
-      expect(startHandle(), findsNothing);
-      expect(endHandle(), findsNothing);
+      expect(startHandle(), findsOneWidget);
+      expect(endHandle(), findsOneWidget);
 
       // Non-collapsed and multi-node: both handles show up.
       controller.changeSelection(
@@ -531,6 +538,148 @@ void main() {
       final (startPos, endPos) = selection!.normalize(controller.document);
       expect(startPos, DocumentPosition('a', const TextNodePosition(0)));
       expect(endPos.nodeId, 'b');
+    },
+  );
+
+  /// Exact screen point for [modelOffset] within [renderEditable]'s node —
+  /// robust against the eyeballed-pixel-offset approach used elsewhere in
+  /// this file, needed here because the crossover test below depends on
+  /// landing precisely on particular offsets partway through a drag. `+ 1`
+  /// for the field's leading sentinel (see `_emptyNodeSentinel` in
+  /// quire_editor.dart).
+  Offset pointForOffset(RenderEditable renderEditable, int modelOffset) {
+    final rect = renderEditable.getLocalRectForCaret(
+      TextPosition(offset: modelOffset + 1),
+    );
+    return renderEditable.localToGlobal(rect.center);
+  }
+
+  testWidgets(
+    'dragging a SINGLE-NODE selection\'s start handle to a new offset widens '
+    'the selection to that exact offset, leaving the end unchanged — then '
+    'the end handle narrows the end, leaving the (new) start unchanged',
+    (tester) async {
+      // Regression test for root cause 1: before the fix, a non-collapsed
+      // selection confined to one node had no quire-drawn handles at all
+      // (native handles were used instead, which can never move
+      // `composer.selection` — see the `selectionControls: null` comment in
+      // quire_editor.dart), so this whole scenario had nothing to drag.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('hello world'))],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      // Select "world" (offsets 6-11), confined to node 'a'.
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(6)),
+          extent: DocumentPosition('a', const TextNodePosition(11)),
+        ),
+      );
+      controller.requestFocus('a');
+      await tester.pump();
+      expect(startHandle(), findsOneWidget);
+      expect(endHandle(), findsOneWidget);
+
+      final renderEditable = tester
+          .state<EditableTextState>(find.byType(EditableText).first)
+          .renderEditable;
+
+      // Drag the start handle from offset 6 to offset 0 — widens the
+      // selection to cover "hello world" entirely.
+      final startGesture = await tester.startGesture(
+        tester.getCenter(startHandle()),
+      );
+      await tester.pump();
+      await startGesture.moveTo(pointForOffset(renderEditable, 0));
+      await tester.pump();
+      await startGesture.up();
+      await tester.pump();
+
+      var selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      var (startPos, endPos) = selection!.normalize(controller.document);
+      expect(startPos, DocumentPosition('a', const TextNodePosition(0)));
+      expect(endPos, DocumentPosition('a', const TextNodePosition(11)));
+
+      // Now drag the end handle from offset 11 to offset 8 — narrows the
+      // selection's end, leaving the widened start (offset 0) untouched.
+      expect(endHandle(), findsOneWidget);
+      final endGesture = await tester.startGesture(
+        tester.getCenter(endHandle()),
+      );
+      await tester.pump();
+      await endGesture.moveTo(pointForOffset(renderEditable, 8));
+      await tester.pump();
+      await endGesture.up();
+      await tester.pump();
+
+      selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      (startPos, endPos) = selection!.normalize(controller.document);
+      expect(startPos, DocumentPosition('a', const TextNodePosition(0)));
+      expect(endPos, DocumentPosition('a', const TextNodePosition(8)));
+    },
+  );
+
+  testWidgets(
+    'dragging a handle across several incremental moves that cross past the '
+    'fixed endpoint keeps that endpoint anchored at its ORIGINAL offset, '
+    'instead of drifting to wherever the selection happened to be after the '
+    'previous move',
+    (tester) async {
+      // Regression test for root cause 2: the old implementation
+      // re-derived "the fixed endpoint" from the CURRENT (already-mutated)
+      // selection on every pointer move, so once the dragged point crossed
+      // the original fixed endpoint, subsequent moves anchored against
+      // whatever the selection had drifted to instead of the true original
+      // fixed offset (8 here). A single big jump can't expose this — it
+      // takes several moves that mutate the selection in between.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('hello world today'))],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      // base=3 (visual start — the handle being dragged), extent=8 (visual
+      // end, must stay put for the whole drag).
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(3)),
+          extent: DocumentPosition('a', const TextNodePosition(8)),
+        ),
+      );
+      controller.requestFocus('a');
+      await tester.pump();
+      expect(startHandle(), findsOneWidget);
+
+      final renderEditable = tester
+          .state<EditableTextState>(find.byType(EditableText).first)
+          .renderEditable;
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(startHandle()),
+      );
+      await tester.pump();
+      // First two moves stay short of the fixed endpoint (8); the third
+      // crosses past it and keeps going.
+      for (final target in [6, 10, 12]) {
+        await gesture.moveTo(pointForOffset(renderEditable, target));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      // Offset 8 was never itself dragged and must stay exactly there; the
+      // dragged handle ends at the last move target, offset 12.
+      expect(startPos, DocumentPosition('a', const TextNodePosition(8)));
+      expect(endPos, DocumentPosition('a', const TextNodePosition(12)));
     },
   );
 
@@ -705,6 +854,76 @@ void main() {
       final (startPos, endPos) = selection.normalize(controller.document);
       expect(startPos, DocumentPosition('p0', const TextNodePosition(10)));
       expect(endPos, DocumentPosition('p0', const TextNodePosition(16)));
+    },
+  );
+
+  testWidgets(
+    'dragging a handle by the knob keeps the selection on the knob\'s own '
+    'line, instead of snapping to the node the knob overlaps',
+    (tester) async {
+      // A real finger drags the KNOB, which is drawn deliberately off the
+      // text line (above it for the start handle) so it doesn't cover the
+      // glyphs it points at — so the finger stays off the line for the whole
+      // drag. The earlier tests grabbed the knob but then moved to a point
+      // back ON the text line, so they never exercised that. Here the finger
+      // moves purely horizontally, staying at knob height: before the fix
+      // `_positionAt` probed the raw finger position, which sits over the
+      // PREVIOUS node, so the selection jumped out of node 'b' entirely.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph here')),
+            TextNode(id: 'b', text: AttributedText('second paragraph here')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      // Select "paragraph" (offsets 7-16) inside node 'b' only.
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('b', const TextNodePosition(7)),
+          extent: DocumentPosition('b', const TextNodePosition(16)),
+        ),
+      );
+      controller.requestFocus('b');
+      await tester.pump();
+      expect(startHandle(), findsOneWidget);
+
+      // Grab the KNOB — the circle at the very top of the handle, which is
+      // what a finger actually lands on — not `getCenter` of the whole
+      // handle rect, which sits down on the text line and so never
+      // exercises this at all. With node 'a' occupying y 16-34 and 'b'
+      // y 38-56, the knob's own centre lands inside node 'a'.
+      final handleRect = tester.getRect(startHandle());
+      final grab = Offset(
+        handleRect.center.dx,
+        handleRect.top + _handleKnobDiameter / 2,
+      );
+      final gesture = await tester.startGesture(grab);
+      await tester.pump();
+      for (final dx in [-15.0, -30.0, -45.0]) {
+        await gesture.moveTo(grab + Offset(dx, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pump();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      final (startPos, endPos) = selection!.normalize(controller.document);
+      // Still confined to 'b' — it must not have jumped into node 'a'.
+      expect(startPos.nodeId, 'b');
+      expect(endPos, DocumentPosition('b', const TextNodePosition(16)));
+      // It genuinely widened leftward, and tracked the finger's actual
+      // column — landing somewhere strictly inside the line. Probing the
+      // raw finger position instead lands in the gap above this node, where
+      // `_positionAt`'s nearest-node fallback returns offset 0 regardless of
+      // how far the finger moved horizontally, so this is the assertion that
+      // separates "tracked the drag" from "snapped to the node edge".
+      final startOffset = (startPos.nodePosition as TextNodePosition).offset;
+      expect(startOffset, lessThan(7));
+      expect(startOffset, greaterThan(0));
     },
   );
 }

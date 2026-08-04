@@ -2,9 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/cupertino.dart'
-    show cupertinoTextSelectionHandleControls;
-import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/rendering.dart' show RenderEditable;
 import 'package:flutter/material.dart' hide TableCell;
@@ -20,6 +17,23 @@ import 'table_settings_menu.dart';
 // Cross-node selection is layered on top (editor-level drag + overlay
 // painting) rather than replacing the fields with a single editor-level
 // DeltaTextInputClient — that rewrite stays a separate, much larger project.
+
+/// Selection controls with no handles and no legacy toolbar — the handles
+/// are quire's own (see `_buildSelectionHandles`), and the toolbar is
+/// `EditableText.contextMenuBuilder`, not this. Mixing in
+/// [TextSelectionHandleControls] (on top of the already-empty
+/// [EmptyTextSelectionControls]) matters, not just cosmetically: passing
+/// `selectionControls: null` outright leaves `EditableTextState.showToolbar`
+/// working (it's routed through `contextMenuBuilder` independently) but
+/// breaks `TextSelectionOverlay.toolbarIsVisible`, which only reads the
+/// `contextMenuBuilder`-driven state when `selectionControls is
+/// TextSelectionHandleControls` — with a plain `null` it instead checks a
+/// legacy `_toolbar` field that path never touches, so it reports the
+/// toolbar as closed even while it's showing.
+class _NoHandleTextSelectionControls extends EmptyTextSelectionControls
+    with TextSelectionHandleControls {}
+
+final _noHandleTextSelectionControls = _NoHandleTextSelectionControls();
 
 /// Paints the highlight for a selection that spans more than one node — a
 /// field only paints its own (single-node) selection while focused, so the
@@ -145,6 +159,16 @@ class _QuireEditorState extends State<QuireEditor> {
   /// too sidesteps the same fight.
   int? _startHandlePointerId;
   int? _endHandlePointerId;
+
+  /// The endpoint a handle drag keeps fixed, captured once at that handle's
+  /// pointer-down — see [_dragSelectionHandle] for why this can't be
+  /// recomputed on every move.
+  DocumentPosition? _dragAnchor;
+
+  /// Finger-to-caret correction for the drag in progress, captured at the
+  /// same pointer-down — see [_buildHandle] for why probing the raw finger
+  /// position doesn't work.
+  Offset? _dragTouchOffset;
 
   bool _isOnSelectionHandle(Offset globalPosition) =>
       (_startHandleHitRect?.contains(globalPosition) ?? false) ||
@@ -713,8 +737,10 @@ class _QuireEditorState extends State<QuireEditor> {
   /// widget's original hit-test bounds.
   Widget _buildHandle({
     required Rect caretRect,
+    required Offset caretGlobalCenter,
     required bool isStart,
     required Color color,
+    required DocumentPosition anchor,
     required ValueChanged<Offset> onDragUpdate,
   }) {
     final knob = Container(
@@ -734,6 +760,17 @@ class _QuireEditorState extends State<QuireEditor> {
           } else {
             _endHandlePointerId = event.pointer;
           }
+          _dragAnchor = anchor;
+          // The knob is drawn deliberately OFF the text line (above it for
+          // the start handle, below for the end) so it doesn't cover the
+          // glyphs it points at — so the finger holding it is off the line
+          // too. Probing `_positionAt` at the raw finger position therefore
+          // misses this field's own rect and falls through to its
+          // nearest-node fallback, which snaps the selection to another
+          // node's edge. Remember how far the finger is from the caret it
+          // grabbed, and keep probing at that corrected point for the whole
+          // drag (the same trick Flutter's own TextSelectionOverlay uses).
+          _dragTouchOffset = caretGlobalCenter - event.position;
         },
         onPointerMove: (event) {
           final owns = isStart
@@ -747,6 +784,8 @@ class _QuireEditorState extends State<QuireEditor> {
           } else {
             _endHandlePointerId = null;
           }
+          _dragAnchor = null;
+          _dragTouchOffset = null;
         },
         onPointerCancel: (event) {
           if (isStart) {
@@ -754,6 +793,8 @@ class _QuireEditorState extends State<QuireEditor> {
           } else {
             _endHandlePointerId = null;
           }
+          _dragAnchor = null;
+          _dragTouchOffset = null;
         },
         child: Center(
           child: Column(
@@ -767,16 +808,10 @@ class _QuireEditorState extends State<QuireEditor> {
 
   /// Draggable start/end handles for the current selection, plus (as a side
   /// effect) [_startHandleHitRect]/[_endHandleHitRect] for
-  /// [_isOnSelectionHandle]. Builds actual widgets only for a *multi-node*
-  /// selection — native `EditableText` handles only ever cover a single
-  /// field, so once a selection spans nodes (e.g. after `selectAll()` on a
-  /// multi-paragraph document) there is otherwise nothing to grab. A
-  /// selection confined to a single node already has Flutter's own native
-  /// handles (drawn and dragged entirely by that field's
-  /// `EditableText`/`TextSelectionOverlay`), so no widget is built for it
-  /// here — but the hit rects are still computed and stored, so the
-  /// document-level `Listener` can recognise a touch-down on one of them and
-  /// back off instead of hijacking the native handle's drag.
+  /// [_isOnSelectionHandle]. Builds actual widgets for ANY non-collapsed
+  /// selection, single-node or multi-node — native `EditableText` handles are
+  /// disabled (see the `selectionControls:` comment on the field), so quire's
+  /// own handles are the only ones there are.
   List<Widget> _buildSelectionHandles(BuildContext context) {
     final selection = widget.controller.composer.selection;
     if (selection == null || selection.isCollapsed) {
@@ -808,51 +843,49 @@ class _QuireEditorState extends State<QuireEditor> {
       _endHandleHitRect = null;
     }
 
-    // A single-node selection's handles are native — only the hit rects
-    // above (just computed) are needed for it, no custom widget.
-    if (!_hasMultiNodeSelection) return const [];
+    // No attached editor box means no global coordinates to correct the
+    // drag against (see the `_dragTouchOffset` capture in [_buildHandle]),
+    // and no hit rects either — so there's nothing draggable to show.
+    if (editorBox == null || !editorBox.attached) return const [];
 
     final color = Theme.of(context).colorScheme.primary;
     return [
       _buildHandle(
         caretRect: startRect,
+        caretGlobalCenter: editorBox.localToGlobal(startRect.center),
         isStart: true,
         color: color,
-        onDragUpdate: (p) =>
-            _dragSelectionHandle(isStart: true, globalPosition: p),
+        anchor: endPos,
+        onDragUpdate: _dragSelectionHandle,
       ),
       _buildHandle(
         caretRect: endRect,
+        caretGlobalCenter: editorBox.localToGlobal(endRect.center),
         isStart: false,
         color: color,
-        onDragUpdate: (p) =>
-            _dragSelectionHandle(isStart: false, globalPosition: p),
+        anchor: startPos,
+        onDragUpdate: _dragSelectionHandle,
       ),
     ];
   }
 
-  /// Moves the visual start (or end) of the current selection to wherever
-  /// [globalPosition] lands, keeping the other end fixed — regardless of
-  /// which of `selection.base`/`selection.extent` is currently the visual
-  /// start vs end (that depends on which direction the original select
-  /// gesture went), via [DocumentSelection.normalize].
-  void _dragSelectionHandle({
-    required bool isStart,
-    required Offset globalPosition,
-  }) {
-    final selection = widget.controller.composer.selection;
-    if (selection == null) return;
-    final newPosition = _positionAt(globalPosition);
+  /// Moves the dragged handle to wherever [globalPosition] lands, keeping
+  /// [_dragAnchor] — the opposite endpoint, captured once at this drag's
+  /// pointer-down (see [_buildHandle]) — fixed as `base`. Using the anchor
+  /// captured at drag-start rather than re-deriving "the other endpoint" from
+  /// the current selection on every move means a crossover (dragging past
+  /// the anchor) just naturally inverts `base`/`extent`, which
+  /// [DocumentSelection.normalize] handles everywhere downstream, instead of
+  /// silently swapping which physical endpoint this handle is moving.
+  void _dragSelectionHandle(Offset globalPosition) {
+    final anchor = _dragAnchor;
+    if (anchor == null) return;
+    final newPosition = _positionAt(
+      globalPosition + (_dragTouchOffset ?? Offset.zero),
+    );
     if (newPosition == null) return;
-    final (startPos, endPos) = selection.normalize(widget.controller.document);
-    final target = isStart ? startPos : endPos;
-    final fixed = isStart ? endPos : startPos;
-    final targetIsBase = selection.base == target;
     widget.controller.changeSelection(
-      DocumentSelection(
-        base: targetIsBase ? newPosition : fixed,
-        extent: targetIsBase ? fixed : newPosition,
-      ),
+      DocumentSelection(base: anchor, extent: newPosition),
     );
   }
 
@@ -1396,11 +1429,16 @@ class _QuireEditorState extends State<QuireEditor> {
         maxLines: null,
         keyboardType: TextInputType.multiline,
         textInputAction: TextInputAction.newline,
-        selectionControls: switch (defaultTargetPlatform) {
-          TargetPlatform.iOS ||
-          TargetPlatform.macOS => cupertinoTextSelectionHandleControls,
-          _ => materialTextSelectionHandleControls,
-        },
+        // Native handles are disabled: selection is one-way (composer ->
+        // field, see `_pushModelToControllers`), so a native handle drag only
+        // ever mutates this field's local selection, which the next rebuild
+        // overwrites with the stale composer selection, snapping the drag
+        // back. Quire drives its own handles against `composer.selection`
+        // instead (see `_buildSelectionHandles`) — the field still paints its
+        // own selection highlight via `selectionColor`, only the draggable
+        // handles are quire's. Not literally `null` — see
+        // [_NoHandleTextSelectionControls]'s doc comment for why.
+        selectionControls: _noHandleTextSelectionControls,
         // Flutter's default menu offers only Select All on a collapsed
         // caret — Cut and Copy need a selection, and it has no built-in
         // "Select" (this word) button the way iOS does. Prepend one, so
