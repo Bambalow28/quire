@@ -380,8 +380,8 @@ void main() {
     });
 
     testWidgets(
-      'the custom size row nudges the pill by 1pt and sets an explicit '
-      'fontSize attribution',
+      'the custom size row nudges the pill by 1pt in place, without closing '
+      'the menu, and sets an explicit fontSize attribution',
       (tester) async {
         final controller = await pumpWithCaret(tester);
 
@@ -390,23 +390,62 @@ void main() {
         await tester.tap(find.byKey(const Key('customSizeIncrement')));
         await tester.pumpAndSettle();
 
-        // The pill now reports the explicit size, not the block default.
-        expect(find.text('17'), findsOneWidget);
+        // The menu is still open — both the toolbar pill and the row's own
+        // number now read the new value, and the +/- buttons are still
+        // there to keep nudging. Before the fix, the increment handler
+        // popped the menu, so only one "17" (the pill) would remain and
+        // customSizeDecrement would already be gone.
+        expect(find.text('17'), findsNWidgets(2));
+        expect(find.byKey(const Key('customSizeDecrement')), findsOneWidget);
         expect(
           controller.composer.composingAttributions,
           contains(const Attribution('fontSize', value: {'size': 17.0})),
         );
 
-        await tester.tap(find.text('17'));
+        // Keep nudging without ever reopening the menu.
+        await tester.tap(find.byKey(const Key('customSizeIncrement')));
         await tester.pumpAndSettle();
+        expect(find.text('18'), findsNWidgets(2));
+
         await tester.tap(find.byKey(const Key('customSizeDecrement')));
         await tester.pumpAndSettle();
-        await tester.tap(find.text('16'));
+        await tester.tap(find.byKey(const Key('customSizeDecrement')));
         await tester.pumpAndSettle();
         await tester.tap(find.byKey(const Key('customSizeDecrement')));
         await tester.pumpAndSettle();
 
-        expect(find.text('15'), findsOneWidget);
+        // Menu is still open at the end of all this.
+        expect(find.text('15'), findsNWidgets(2));
+        expect(find.byKey(const Key('customSizeIncrement')), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'picking a named step still closes the menu, leaving one pill behind',
+      (tester) async {
+        final controller = await pumpWithCaret(tester);
+
+        await tester.tap(find.text('16'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const Key('customSizeIncrement')));
+        await tester.pumpAndSettle();
+        expect(find.text('17'), findsNWidgets(2));
+
+        await tester.tap(find.text('Title'));
+        await tester.pumpAndSettle();
+
+        expect(
+          (controller.document.getNodeById('a') as TextNode).blockType,
+          'header1',
+        );
+        // The menu is gone now — only the pill remains. The composing
+        // fontSize attribution (a collapsed-selection thing) outlives the
+        // block-type change, so the pill still reads the explicit 17
+        // rather than header1's own 32 — the custom row and its
+        // customSizeIncrement key are gone with the menu, which is the
+        // part this test is actually checking.
+        expect(find.text('17'), findsOneWidget);
+        expect(find.byKey(const Key('customSizeIncrement')), findsNothing);
       },
     );
 
@@ -420,11 +459,13 @@ void main() {
       await tester.tap(find.byKey(const Key('customSizeValue')));
       await tester.pumpAndSettle();
 
+      // The dialog opened on top of the still-open menu, not instead of it.
       await tester.enterText(find.byType(TextField), '48');
       await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
 
-      expect(find.text('48'), findsOneWidget);
+      // Menu still open behind the (now-closed) dialog: pill + row both '48'.
+      expect(find.text('48'), findsNWidgets(2));
       expect(
         controller.composer.composingAttributions,
         contains(const Attribution('fontSize', value: {'size': 48.0})),
@@ -445,12 +486,47 @@ void main() {
       await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
 
-      expect(find.text('72'), findsOneWidget);
+      expect(find.text('72'), findsNWidgets(2));
       expect(
         controller.composer.composingAttributions,
         contains(const Attribution('fontSize', value: {'size': 72.0})),
       );
     });
+
+    testWidgets(
+      'the checkmark moves to Custom when an explicit size is active, and '
+      'off every named step',
+      (tester) async {
+        await pumpWithCaret(tester);
+
+        await tester.tap(find.text('16'));
+        await tester.pumpAndSettle();
+
+        // Resting state: Body (the current block) is checked, Custom is not.
+        expect(
+          find.descendant(
+            of: find.widgetWithText(PopupMenuItem<String>, 'Custom'),
+            matching: find.byIcon(Icons.check),
+          ),
+          findsNothing,
+        );
+
+        await tester.tap(find.byKey(const Key('customSizeIncrement')));
+        await tester.pumpAndSettle();
+
+        // Custom is now checked...
+        expect(
+          find.descendant(
+            of: find.widgetWithText(PopupMenuItem<String>, 'Custom'),
+            matching: find.byIcon(Icons.check),
+          ),
+          findsOneWidget,
+        );
+        // ...and exactly one row is checked overall (the four named steps
+        // plus Custom): no double-tick, no orphaned tick left on Body.
+        expect(find.byIcon(Icons.check), findsOneWidget);
+      },
+    );
 
     testWidgets(
       'a mixed-size selection degrades to the block default rather than '

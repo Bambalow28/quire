@@ -1663,6 +1663,10 @@ class _QuireEditorState extends State<QuireEditor> {
         // removes the row instead of showing it empty.
         enableSuggestions: false,
         autocorrect: false,
+        // Soft-keyboard auto-shift for the first letter of a sentence. This
+        // is a hint to the platform keyboard only — it never mutates typed
+        // text itself, so intentional lowercase still goes through untouched.
+        textCapitalization: TextCapitalization.sentences,
         cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
         backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
         selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),

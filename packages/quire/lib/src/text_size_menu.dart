@@ -118,114 +118,139 @@ class TextSizeMenu extends StatelessWidget {
       onSelected: (value) {
         if (value != _customRowValue) controller.applyBlockType(value);
       },
-      itemBuilder: (menuContext) => [
+      itemBuilder: (context) => [
         for (final step in _steps)
           PopupMenuItem(
             value: step.blockType,
             height: _itemHeight(step.size),
-            child: Row(
-              children: [
-                SizedBox(
-                  width: 26,
-                  child: step.blockType == current.blockType
-                      ? Icon(Icons.check, size: 18, color: scheme.primary)
-                      : null,
-                ),
-                // The whole point of the menu: each name is drawn at its own
-                // size, so the choice is visible rather than inferred from a
-                // label.
-                Expanded(
-                  child: Text(
-                    step.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: _previewSize(step.size),
-                      fontWeight: step.blockType == 'paragraph'
-                          ? FontWeight.w400
-                          : FontWeight.w700,
-                      color: scheme.onSurface,
+            // Wrapped in a ListenableBuilder because the custom row's +/-
+            // (below) can flip which row is checked while this menu is
+            // still open — the item list itself is only ever built once,
+            // when the menu opens, so without this the checkmark would
+            // freeze at whatever was true at that moment.
+            child: ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                final isActive =
+                    step.blockType == current.blockType &&
+                    controller.explicitFontSize == null;
+                return Row(
+                  children: [
+                    SizedBox(
+                      width: 26,
+                      child: isActive
+                          ? Icon(Icons.check, size: 18, color: scheme.primary)
+                          : null,
                     ),
-                  ),
-                ),
-                const SizedBox(width: 20),
-                Text(
-                  '${step.size.toInt()}',
-                  style: theme.textTheme.labelMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
+                    // The whole point of the menu: each name is drawn at its
+                    // own size, so the choice is visible rather than
+                    // inferred from a label.
+                    Expanded(
+                      child: Text(
+                        step.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: _previewSize(step.size),
+                          fontWeight: step.blockType == 'paragraph'
+                              ? FontWeight.w400
+                              : FontWeight.w700,
+                          color: scheme.onSurface,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 20),
+                    Text(
+                      '${step.size.toInt()}',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         const PopupMenuDivider(),
         // Custom sizing: the four named steps above are still block-type
         // changes, this row is the only place that sets an explicit
-        // `fontSize` attribution. +/- nudge by 1pt; tapping the number opens
-        // a dialog for an exact value. Either action closes the menu (like
-        // picking a step above) so the toolbar pill's new value is visible
-        // right away.
+        // `fontSize` attribution. +/- nudge by 1pt in place, and tapping the
+        // number opens a dialog for an exact value — none of the three close
+        // the menu; only picking one of the named steps above does that.
         PopupMenuItem(
           value: _customRowValue,
           height: _customRowHeight,
-          child: Row(
-            children: [
-              const SizedBox(width: 26),
-              Expanded(
-                child: Text(
-                  'Custom',
-                  style: TextStyle(color: scheme.onSurface),
-                ),
-              ),
-              IconButton(
-                key: const Key('customSizeDecrement'),
-                icon: const Icon(Icons.remove, size: 18),
-                tooltip: 'Smaller',
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: () {
-                  controller.setFontSize(
-                    (effectiveSize - 1)
-                        .clamp(_minCustomSize, _maxCustomSize)
-                        .toDouble(),
-                  );
-                  Navigator.pop(menuContext);
-                },
-              ),
-              InkWell(
-                key: const Key('customSizeValue'),
-                onTap: () {
-                  Navigator.pop(menuContext);
-                  _pickCustomSize(context, controller, effectiveSize);
-                },
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Text(
-                    '${effectiveSize.round()}',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.onSurfaceVariant,
+          // Wrapped in a ListenableBuilder so the row's own number (and its
+          // checkmark) update live as +/- are pressed, without the menu
+          // needing to close and reopen to see the new value — see the
+          // itemBuilder-only-runs-once note above.
+          child: ListenableBuilder(
+            listenable: controller,
+            builder: (context, _) {
+              final explicitSize = controller.explicitFontSize;
+              final rowSize = explicitSize ?? current.size;
+              return Row(
+                children: [
+                  SizedBox(
+                    width: 26,
+                    child: explicitSize != null
+                        ? Icon(Icons.check, size: 18, color: scheme.primary)
+                        : null,
+                  ),
+                  Expanded(
+                    child: Text(
+                      'Custom',
+                      style: TextStyle(color: scheme.onSurface),
                     ),
                   ),
-                ),
-              ),
-              IconButton(
-                key: const Key('customSizeIncrement'),
-                icon: const Icon(Icons.add, size: 18),
-                tooltip: 'Larger',
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: () {
-                  controller.setFontSize(
-                    (effectiveSize + 1)
-                        .clamp(_minCustomSize, _maxCustomSize)
-                        .toDouble(),
-                  );
-                  Navigator.pop(menuContext);
-                },
-              ),
-            ],
+                  IconButton(
+                    key: const Key('customSizeDecrement'),
+                    icon: const Icon(Icons.remove, size: 18),
+                    tooltip: 'Smaller',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    onPressed: () => controller.setFontSize(
+                      (rowSize - 1)
+                          .clamp(_minCustomSize, _maxCustomSize)
+                          .toDouble(),
+                    ),
+                  ),
+                  InkWell(
+                    key: const Key('customSizeValue'),
+                    onTap: () => _pickCustomSize(context, controller, rowSize),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Text(
+                        '${rowSize.round()}',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    key: const Key('customSizeIncrement'),
+                    icon: const Icon(Icons.add, size: 18),
+                    tooltip: 'Larger',
+                    visualDensity: VisualDensity.compact,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    onPressed: () => controller.setFontSize(
+                      (rowSize + 1)
+                          .clamp(_minCustomSize, _maxCustomSize)
+                          .toDouble(),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ],
