@@ -99,7 +99,9 @@ void main() {
     await t.pumpAndSettle();
     await t.enterText(find.byType(EditableText).at(0), 'hello');
     await t.pumpAndSettle();
-    expect((c.document.getNodeById('p')! as TextNode).text.text, 'hello');
+    // Auto-capitalize turns the first letter of an empty node's first
+    // insertion uppercase (see quire_editor_controller.dart's replaceText).
+    expect((c.document.getNodeById('p')! as TextNode).text.text, 'Hello');
     expect(c.document.toJson().toString().contains('​'), isFalse);
   });
 

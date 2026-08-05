@@ -139,7 +139,9 @@ void main() {
       await tester.pump();
 
       final node = controller.document.getNodeById('a') as TextNode;
-      expect(node.text.text, 'hi');
+      // Auto-capitalize turns the first letter of an empty node's first
+      // insertion uppercase (see quire_editor_controller.dart's replaceText).
+      expect(node.text.text, 'Hi');
       expect(node.text.text.contains('​'), isFalse);
       final json = controller.document.toJson().toString();
       expect(json.contains('​'), isFalse);

@@ -577,8 +577,8 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     // composingAttributions to {}, which would otherwise make the following
     // insert (attributions: null -> composer's set) come out unformatted.
     Set<Attribution>? attributions;
+    final node = document.getNodeById(nodeId);
     if (end > start) {
-      final node = document.getNodeById(nodeId);
       if (node is TextNode) attributions = node.text.attributionsAt(start);
       requests.add(
         ChangeSelectionRequest(
@@ -590,11 +590,31 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       );
       requests.add(DeleteSelectionRequest());
     }
-    if (insertedText.isNotEmpty) {
+    var textToInsert = insertedText;
+    // Deterministic auto-capitalize: the platform's `textCapitalization`
+    // hint (see quire_editor.dart's EditableText) never fires for the first
+    // character of a node, because every field is prefixed with a
+    // zero-width sentinel (see `_emptyNodeSentinel`) — the character before
+    // the caret at offset 0 is the sentinel, not "start of text", which
+    // defeats iOS/Android's own auto-shift heuristic. Fix it here instead,
+    // at the single choke point every insert (soft keyboard, hardware
+    // keyboard, paste) routes through: if this text is landing at offset 0
+    // of a node that was empty before this edit, capitalize just its first
+    // character. Code blocks are exempt — auto-capitalizing code is wrong.
+    if (node is TextNode &&
+        start == 0 &&
+        node.text.text.isEmpty &&
+        node.blockType != 'code' &&
+        textToInsert.isNotEmpty) {
+      final first = textToInsert[0];
+      final upper = first.toUpperCase();
+      if (upper != first) textToInsert = upper + textToInsert.substring(1);
+    }
+    if (textToInsert.isNotEmpty) {
       requests.add(
         InsertTextRequest(
           DocumentPosition(nodeId, TextNodePosition(start)),
-          insertedText,
+          textToInsert,
           attributions,
         ),
       );
