@@ -39,10 +39,12 @@ Future<void> _pumpEditor(
 
 void main() {
   // The checkbox's vertical center must land within half a pixel of the
-  // first rendered line's real vertical centre — tight enough that it only
-  // passes when the box is actually derived from real layout, not a
-  // same-ballpark guess.
+  // first rendered line's real vertical centre, offset by the deliberate
+  // optical nudge (see `_prefixFor` in quire_editor.dart) — tight enough
+  // that it only passes when the box is actually derived from real layout,
+  // not a same-ballpark guess.
   const tolerance = 0.5;
+  const opticalNudge = 1.5;
 
   Future<void> expectCentered(
     WidgetTester tester, {
@@ -72,7 +74,7 @@ void main() {
 
     expect(
       checkboxCenter,
-      closeTo(lineMid, tolerance),
+      closeTo(lineMid - opticalNudge, tolerance),
       reason:
           'checkbox center=$checkboxCenter vs first-line center=$lineMid '
           '(line $lineTop..$lineBottom)',

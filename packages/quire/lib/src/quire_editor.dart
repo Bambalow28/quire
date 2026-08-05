@@ -2006,6 +2006,15 @@ class _QuireEditorState extends State<QuireEditor> {
       final measured = _checklistBoxes[node.id];
       final topOffset = measured?.topOffset ?? 0.0;
       final height = measured?.height ?? _lineHeight(context, node);
+      // Geometric centering on the line's own box reads as slightly low: an
+      // outlined square's visual weight sits toward its lower half (the
+      // stroke closes the shape there), so the eye expects it a touch above
+      // true center. This is the standard optical correction for boxy glyphs
+      // next to text — not a fontSize guess, hence exempt from "measure the
+      // line, never guess" (see [_scheduleChecklistBoxMeasurement]). Done as
+      // a paint-time translate, not folded into the padding above, because
+      // `Padding` rejects a negative inset and this can't go negative.
+      const opticalNudge = 1.5;
       return Padding(
         padding: EdgeInsets.only(top: topOffset, right: 4),
         // Sized to exactly one line of this node's own text, so the checkbox
@@ -2023,19 +2032,23 @@ class _QuireEditorState extends State<QuireEditor> {
           // Scaled rather than resized: Checkbox paints a fixed 18pt mark, so
           // this is the only way to shrink it — and because a transform is
           // paint-time, the box it centres in is untouched.
-          child: Transform.scale(
-            scale: 0.8,
-            // Keeps the checkbox out of the focus tree so tapping it can't
-            // pull focus (and the keyboard) off the node's text field. This
-            // used to be a `FocusNode(canRequestFocus: false)` built inline,
-            // which minted — and leaked — a new node on every rebuild, so
-            // every keystroke re-attached it mid-frame.
-            child: ExcludeFocus(
-              child: Checkbox(
-                value: node.isChecked,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                onChanged: (_) => widget.controller.toggleTaskChecked(node.id),
+          child: Transform.translate(
+            offset: const Offset(0, -opticalNudge),
+            child: Transform.scale(
+              scale: 0.8,
+              // Keeps the checkbox out of the focus tree so tapping it can't
+              // pull focus (and the keyboard) off the node's text field. This
+              // used to be a `FocusNode(canRequestFocus: false)` built inline,
+              // which minted — and leaked — a new node on every rebuild, so
+              // every keystroke re-attached it mid-frame.
+              child: ExcludeFocus(
+                child: Checkbox(
+                  value: node.isChecked,
+                  visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  onChanged: (_) =>
+                      widget.controller.toggleTaskChecked(node.id),
+                ),
               ),
             ),
           ),
