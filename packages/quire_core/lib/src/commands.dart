@@ -432,82 +432,6 @@ class _ToggleAttributionCommand extends EditCommand {
   }
 }
 
-// --- SetFontSizeRequest ---------------------------------------------------
-
-const _fontSizeAttributionName = 'fontSize';
-
-/// Sets (or, with `size: null`, clears) an explicit point size over the
-/// current selection, as a `fontSize` attribution. Unlike
-/// [ToggleAttributionRequest], this is a SET, not a toggle: applying 24pt
-/// where a 32pt span already exists in that range replaces it outright
-/// (attributions of the same name always conflict — see
-/// [Attribution.conflictsWith] — so [AttributedText.addAttribution] already
-/// strips the old span before adding the new one), rather than leaving two
-/// overlapping `fontSize` spans behind.
-class SetFontSizeRequest extends EditRequest {
-  SetFontSizeRequest(this.size);
-  final double? size;
-}
-
-class _SetFontSizeCommand extends EditCommand {
-  _SetFontSizeCommand(this.request);
-  final SetFontSizeRequest request;
-
-  @override
-  void execute(EditContext context, CommandExecutor executor) {
-    final selection = context.composer.selection;
-    if (selection == null) return;
-    final size = request.size;
-
-    // Collapsed caret: arms `composingAttributions` for the next typed
-    // character, the same way `ToggleAttributionRequest` does — there's no
-    // text here yet to attach a span to.
-    if (selection.isCollapsed) {
-      context.composer.composingAttributions.removeWhere(
-        (a) => a.name == _fontSizeAttributionName,
-      );
-      if (size != null) {
-        context.composer.composingAttributions.add(
-          Attribution(_fontSizeAttributionName, value: {'size': size}),
-        );
-      }
-      executor.emit(ComposingAttributionsChanged());
-      return;
-    }
-
-    final document = context.document;
-    final (startPos, endPos) = selection.normalize(document);
-    final startIndex = document.getNodeIndexById(startPos.nodeId);
-    final endIndex = document.getNodeIndexById(endPos.nodeId);
-
-    final changedIds = <String>[];
-    for (var i = startIndex; i <= endIndex; i++) {
-      final node = document.getNodeAt(i);
-      if (node is! TextNode) continue;
-      final segStart = i == startIndex
-          ? (startPos.nodePosition as TextNodePosition).offset
-          : 0;
-      final segEnd = i == endIndex
-          ? (endPos.nodePosition as TextNodePosition).offset
-          : node.text.text.length;
-      if (segEnd <= segStart) continue;
-      node.text = size != null
-          ? node.text.addAttribution(
-              Attribution(_fontSizeAttributionName, value: {'size': size}),
-              segStart,
-              segEnd,
-            )
-          : node.text.clearAttributionsNamed(
-              _fontSizeAttributionName,
-              segStart,
-              segEnd,
-            );
-      changedIds.add(node.id);
-    }
-    if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
-  }
-}
-
 // --- ChangeBlockTypeRequest / ChangeIndentRequest -----------------------
 
 class ChangeBlockTypeRequest extends EditRequest {
@@ -792,8 +716,6 @@ final List<EditRequestHandler> defaultRequestHandlers = [
   (request) => request is ChangeBlockTypeRequest
       ? _ChangeBlockTypeCommand(request)
       : null,
-  (request) =>
-      request is SetFontSizeRequest ? _SetFontSizeCommand(request) : null,
   (request) =>
       request is ChangeIndentRequest ? _ChangeIndentCommand(request) : null,
   (request) => request is ChangeTextAlignRequest

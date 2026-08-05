@@ -151,42 +151,6 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     history.execute([ChangeLineSpacingRequest(spacing)]);
   }
 
-  /// Sets (or, with `size: null`, clears) an explicit point size over the
-  /// selection — see [SetFontSizeRequest] for the SET-not-toggle semantics.
-  /// Routed the same way [_toggle] routes attributions: a collapsed caret
-  /// only arms `composingAttributions`, which isn't part of the document
-  /// snapshot, so it goes through `editor.execute` directly rather than
-  /// `history`, to avoid recording an undo step that visibly does nothing.
-  void setFontSize(double? size) {
-    final selection = composer.selection;
-    if (selection == null) return;
-    if (selection.isCollapsed) {
-      editor.execute([SetFontSizeRequest(size)]);
-    } else {
-      history.execute([SetFontSizeRequest(size)]);
-    }
-  }
-
-  /// The explicit `fontSize` attribution's point size covering the caret or
-  /// the *entire* selection, or `null` if none is active.
-  ///
-  /// Mixed-selection behaviour: [activeAttributions] only reports an
-  /// attribution when it covers the whole selection range (see
-  /// [hasAttributionThroughout]), so a selection spanning several different
-  /// explicit sizes reports no `fontSize` attribution at all rather than an
-  /// arbitrary one of them — callers (the toolbar pill) then fall back to
-  /// the block type's default size, which reads as "no single answer" rather
-  /// than a misleading specific number.
-  double? get explicitFontSize {
-    for (final a in activeAttributions) {
-      if (a.name == 'fontSize') {
-        final size = a.value['size'];
-        if (size is num) return size.toDouble();
-      }
-    }
-    return null;
-  }
-
   void undo() => history.undo();
   void redo() => history.redo();
 

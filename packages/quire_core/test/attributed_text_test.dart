@@ -175,48 +175,4 @@ void main() {
     },
   );
 
-  group('clearAttributionsNamed', () {
-    test('removes matching spans by name regardless of their value', () {
-      final text = AttributedText('hello world', [
-        const AttributionSpan(
-          Attribution('fontSize', value: {'size': 32}),
-          0,
-          5,
-        ),
-      ]);
-      final result = text.clearAttributionsNamed('fontSize', 0, 5);
-      expect(result.attributionsAt(0), isEmpty);
-    });
-
-    test('only trims the overlapping part of a wider span', () {
-      final text = AttributedText('hello world', [
-        const AttributionSpan(
-          Attribution('fontSize', value: {'size': 32}),
-          0,
-          11,
-        ),
-      ]);
-      final result = text.clearAttributionsNamed('fontSize', 3, 6);
-      expect(result.attributionsAt(0), {
-        const Attribution('fontSize', value: {'size': 32}),
-      });
-      expect(result.attributionsAt(4), isEmpty);
-      expect(result.attributionsAt(9), {
-        const Attribution('fontSize', value: {'size': 32}),
-      });
-    });
-
-    test('leaves other attribution names untouched', () {
-      final text = AttributedText('hello world', [
-        AttributionSpan(bold, 0, 5),
-        const AttributionSpan(
-          Attribution('fontSize', value: {'size': 32}),
-          0,
-          5,
-        ),
-      ]);
-      final result = text.clearAttributionsNamed('fontSize', 0, 5);
-      expect(result.attributionsAt(0), {bold});
-    });
-  });
 }

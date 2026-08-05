@@ -441,6 +441,36 @@ class _QuireEditorState extends State<QuireEditor> {
     state.showToolbar();
   }
 
+  /// Gives [state]'s field a real non-collapsed local selection (covering
+  /// its own full field text) and then opens the toolbar — the same
+  /// showToolbar()-needs-a-selection-overlay mechanism [_selectWordAt] uses.
+  /// Called after [QuireEditorController.selectAll] so the toolbar (Cut/
+  /// Copy) appears immediately instead of requiring a second long-press.
+  ///
+  /// The field's own selection here is cosmetic for a cross-node document
+  /// selection (Cut/Copy/Paste are overridden to act on the whole document
+  /// in that case) but must stay accurate for a single-node one, where the
+  /// default Cut/Copy/Paste act on exactly this range — hence `_toField(0)`
+  /// rather than the field's literal `0`, which would fold the leading
+  /// sentinel into the copied text. Routing this through
+  /// `userUpdateTextEditingValue` fires `_onControllerChanged`, but with the
+  /// text unchanged it takes the selection-only path, which bails out
+  /// immediately once it sees a cross-node document selection — so this
+  /// can't clobber that selection.
+  void _showToolbarForWholeField(EditableTextState state) {
+    final value = state.textEditingValue;
+    state.userUpdateTextEditingValue(
+      value.copyWith(
+        selection: TextSelection(
+          baseOffset: _toField(0),
+          extentOffset: value.text.length,
+        ),
+      ),
+      SelectionChangedCause.toolbar,
+    );
+    state.showToolbar();
+  }
+
   /// Moves the caret through EditableText's own gesture path rather than by
   /// poking its controller: that is what builds the selection overlay
   /// (handles, magnifier, copy/paste toolbar). A direct controller write
@@ -1692,6 +1722,15 @@ class _QuireEditorState extends State<QuireEditor> {
           final value = state.textEditingValue;
           final canSelectWord =
               value.selection.isCollapsed && value.text.isNotEmpty;
+          final docSelection = widget.controller.composer.selection;
+          // Cut/Copy/Paste's built-in handlers act on this field's own
+          // (possibly stale, see `_pushModelToControllers`) local selection
+          // only — fine for a same-node selection, wrong once the document
+          // selection spans more than one node, where they need to act on
+          // the whole thing instead.
+          final isCrossNode =
+              docSelection != null &&
+              docSelection.base.nodeId != docSelection.extent.nodeId;
           return AdaptiveTextSelectionToolbar.buttonItems(
             anchors: state.contextMenuAnchors,
             buttonItems: [
@@ -1724,6 +1763,35 @@ class _QuireEditorState extends State<QuireEditor> {
                     onPressed: () {
                       state.hideToolbar();
                       widget.controller.selectAll();
+                      _showToolbarForWholeField(state);
+                    },
+                  )
+                else if (isCrossNode && item.type == ContextMenuButtonType.copy)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.copy,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.copySelection();
+                    },
+                  )
+                else if (isCrossNode && item.type == ContextMenuButtonType.cut)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.cut,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.cutSelection();
+                    },
+                  )
+                else if (isCrossNode &&
+                    item.type == ContextMenuButtonType.paste)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.paste,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.pasteClipboard();
                     },
                   )
                 else

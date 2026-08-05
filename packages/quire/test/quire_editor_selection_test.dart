@@ -1106,4 +1106,88 @@ void main() {
       await tester.pump();
     },
   );
+
+  group('Select All shows the toolbar immediately, like Select does', () {
+    Future<QuireEditorController> pumpMultiParagraphAndOpenMenu(
+      WidgetTester tester,
+    ) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph')),
+            TextNode(id: 'b', text: AttributedText('second paragraph')),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+      final target =
+          tester.getTopLeft(find.byType(EditableText).first) +
+          const Offset(20, 8);
+      await tester.tapAt(target); // caret
+      await tester.pumpAndSettle();
+      await tester.tapAt(target); // caret again -> caret menu
+      await tester.pumpAndSettle();
+      return controller;
+    }
+
+    testWidgets(
+      'tapping Select All opens the toolbar with Cut/Copy, no second '
+      'long-press needed, and the cross-node document selection survives '
+      'the toolbar appearing',
+      (tester) async {
+        final controller = await pumpMultiParagraphAndOpenMenu(tester);
+
+        await tester.tap(find.text('Select all'));
+        await tester.pumpAndSettle();
+
+        expect(find.text('Copy'), findsOneWidget);
+        expect(find.text('Cut'), findsOneWidget);
+
+        // Showing the toolbar gives the focused field its own local
+        // selection (see `_showToolbarForWholeField`) — this must not have
+        // clobbered the document-wide selection back down to that one node.
+        final selection = controller.composer.selection;
+        expect(selection, isNotNull);
+        expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
+        expect(selection.base.nodeId, 'a');
+        expect(selection.extent.nodeId, 'b');
+      },
+    );
+
+    testWidgets(
+      'Copy after Select All puts the whole document on the clipboard, not '
+      'just one paragraph',
+      (tester) async {
+        await pumpMultiParagraphAndOpenMenu(tester);
+
+        await tester.tap(find.text('Select all'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Copy'));
+        await tester.pumpAndSettle();
+
+        final data = await Clipboard.getData('text/plain');
+        expect(data?.text, 'first paragraph\nsecond paragraph');
+      },
+    );
+
+    testWidgets(
+      'Cut after Select All empties the whole document, not just one '
+      'paragraph',
+      (tester) async {
+        final controller = await pumpMultiParagraphAndOpenMenu(tester);
+
+        await tester.tap(find.text('Select all'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Cut'));
+        await tester.pumpAndSettle();
+
+        expect(controller.document.nodes.length, 1);
+        final remaining = controller.document.nodes.single as TextNode;
+        expect(remaining.text.text, isEmpty);
+
+        final data = await Clipboard.getData('text/plain');
+        expect(data?.text, 'first paragraph\nsecond paragraph');
+      },
+    );
+  });
 }
