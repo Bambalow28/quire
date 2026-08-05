@@ -105,6 +105,18 @@ class _QuireEditorState extends State<QuireEditor> {
   final Map<String, FocusNode> _focusNodes = {};
   final Map<String, GlobalKey<EditableTextState>> _editableKeys = {};
 
+  /// Per-`listItemTask` node's real first-line box (top offset from the
+  /// field's own top, and that line's height), measured post-frame from the
+  /// node's own `RenderEditable` — see [_scheduleChecklistBoxMeasurement].
+  /// A `TextStyle.height` multiplier (`node.lineSpacing`) doesn't just grow
+  /// the field's line-to-line spacing evenly above and below the glyphs; how
+  /// Skia splits that extra leading for line 1 differs depending on whether
+  /// the item wraps, so it can only be read from the real render object, not
+  /// predicted from an isolated `TextPainter`. Empty until the first
+  /// post-frame measurement lands, so [_prefixFor] falls back to the old
+  /// `_lineHeight` estimate for one frame on first build.
+  final Map<String, ({double topOffset, double height})> _checklistBoxes = {};
+
   /// Text nodes paired with their controller, in document order, rebuilt by
   /// [_syncControllers]. Everything that walks the document per frame reads
   /// this instead of looking each controller up by node id.
@@ -1157,6 +1169,7 @@ class _QuireEditorState extends State<QuireEditor> {
       _controllers.remove(staleId)?.dispose();
       _focusNodes.remove(staleId)?.dispose();
       _editableKeys.remove(staleId);
+      _checklistBoxes.remove(staleId);
     }
 
     for (final node in widget.controller.document.nodesInDocumentOrder) {
@@ -1664,10 +1677,47 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
+  /// Reads [node]'s field's real first-line box off its `RenderEditable`
+  /// after this frame paints, and rebuilds if it moved [_prefixFor]'s
+  /// checkbox. Scheduled from every build of a `listItemTask` node (see
+  /// [_buildTextNode]) — cheap: skipped entirely once the cached value
+  /// stops changing, which is every frame after the first for a document
+  /// that isn't actively resizing/retyping.
+  void _scheduleChecklistBoxMeasurement(String nodeId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final renderEditable = _editableKeys[nodeId]?.currentState?.renderEditable;
+      final fieldLength = _controllers[nodeId]?.text.length;
+      if (renderEditable == null || fieldLength == null || fieldLength < 1) {
+        return;
+      }
+      // Any run of characters confined to line 1 reports that line's real
+      // box — one character (or just the sentinel, on an empty node) is
+      // enough and can never cross a wrap point.
+      final boxes = renderEditable.getBoxesForSelection(
+        TextSelection(baseOffset: 0, extentOffset: math.min(2, fieldLength)),
+      );
+      if (boxes.isEmpty) return;
+      final box = boxes.first;
+      final measured = (topOffset: box.top, height: box.bottom - box.top);
+      final cached = _checklistBoxes[nodeId];
+      const epsilon = 0.05;
+      if (cached != null &&
+          (cached.topOffset - measured.topOffset).abs() < epsilon &&
+          (cached.height - measured.height).abs() < epsilon) {
+        return;
+      }
+      setState(() => _checklistBoxes[nodeId] = measured);
+    });
+  }
+
   Widget _buildTextNode(BuildContext context, TextNode node) {
     final controller = _controllers[node.id]!;
     final focusNode = _focusNodes[node.id]!;
     final editableKey = _editableKeys[node.id]!;
+    if (node.blockType == 'listItemTask') {
+      _scheduleChecklistBoxMeasurement(node.id);
+    }
     final theme = Theme.of(context);
 
     // Raw EditableText installs no tap recognizer of its own (that's defect
@@ -1940,8 +1990,19 @@ class _QuireEditorState extends State<QuireEditor> {
   /// and its baseline drifts off the line it labels.
   Widget? _prefixFor(BuildContext context, TextNode node) {
     if (node.blockType == 'listItemTask') {
+      // The measured box (see [_scheduleChecklistBoxMeasurement]) is the
+      // real first line's top offset + height off the field's own
+      // RenderEditable. `TextStyle.height` (node.lineSpacing) doesn't split
+      // its extra leading evenly above/below the glyphs, and how it splits
+      // for line 1 differs between a one-line item and a wrapped one — a
+      // synthetic TextPainter can't predict that, only the real render
+      // object can. Nothing measured yet (first frame) falls back to the
+      // old top-offset-0 / single-line-height estimate.
+      final measured = _checklistBoxes[node.id];
+      final topOffset = measured?.topOffset ?? 0.0;
+      final height = measured?.height ?? _lineHeight(context, node);
       return Padding(
-        padding: const EdgeInsets.only(right: 4),
+        padding: EdgeInsets.only(top: topOffset, right: 4),
         // Sized to exactly one line of this node's own text, so the checkbox
         // centres on the *first* line: the row is top-aligned, so a taller
         // box would push the mark down past a one-line item's text, and on a
@@ -1953,7 +2014,7 @@ class _QuireEditorState extends State<QuireEditor> {
         // keeps that mark from clipping at very small text sizes.
         child: SizedBox(
           width: 24,
-          height: math.max(_lineHeight(context, node), 18),
+          height: math.max(height, 18),
           // Scaled rather than resized: Checkbox paints a fixed 18pt mark, so
           // this is the only way to shrink it — and because a transform is
           // paint-time, the box it centres in is untouched.

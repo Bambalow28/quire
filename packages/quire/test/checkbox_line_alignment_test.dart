@@ -1,0 +1,138 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:quire/quire.dart';
+
+Future<void> _pumpEditor(
+  WidgetTester tester,
+  QuireEditorController controller,
+) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Scaffold(
+        body: SizedBox(width: 300, child: QuireEditor(controller: controller)),
+      ),
+    ),
+  );
+  // The checkbox's box is refined post-frame from the field's real
+  // RenderEditable (see `_scheduleChecklistBoxMeasurement`) — one more pump
+  // lets that measurement's `setState` land before a test inspects it.
+  await tester.pump();
+}
+
+/// The real vertical extent of the first line of text inside the node's
+/// `EditableText` — measured via `RenderEditable.getBoxesForSelection` (real
+/// layout), never derived from `fontSize`.
+(double top, double bottom) _firstLineExtent(WidgetTester tester) {
+  final state = tester.state<EditableTextState>(find.byType(EditableText).first);
+  final renderEditable = state.renderEditable;
+  // Selecting just the first two characters (leading sentinel + one glyph)
+  // stays within line 1 regardless of wrapping, and a TextBox's height for
+  // any run within one line equals that line's own box height.
+  final boxes = renderEditable.getBoxesForSelection(
+    const TextSelection(baseOffset: 0, extentOffset: 2),
+  );
+  final box = boxes.first;
+  final topLeft = renderEditable.localToGlobal(Offset(box.left, box.top));
+  final bottomLeft = renderEditable.localToGlobal(Offset(box.left, box.bottom));
+  return (topLeft.dy, bottomLeft.dy);
+}
+
+void main() {
+  // The checkbox's vertical center must land within half a pixel of the
+  // first rendered line's real vertical centre — tight enough that it only
+  // passes when the box is actually derived from real layout, not a
+  // same-ballpark guess.
+  const tolerance = 0.5;
+
+  Future<void> expectCentered(
+    WidgetTester tester, {
+    required String text,
+    double? lineSpacing,
+  }) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText(text),
+            metadata: {
+              'blockType': 'listItemTask',
+              if (lineSpacing != null) 'lineSpacing': lineSpacing,
+            },
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    final checkboxRect = tester.getRect(find.byType(Checkbox));
+    final (lineTop, lineBottom) = _firstLineExtent(tester);
+    final checkboxCenter = checkboxRect.top + checkboxRect.height / 2;
+    final lineMid = (lineTop + lineBottom) / 2;
+
+    expect(
+      checkboxCenter,
+      closeTo(lineMid, tolerance),
+      reason:
+          'checkbox center=$checkboxCenter vs first-line center=$lineMid '
+          '(line $lineTop..$lineBottom)',
+    );
+  }
+
+  testWidgets(
+    'single-line checklist item at the default line spacing: checkbox centers on the line',
+    (tester) async {
+      await expectCentered(tester, text: 'buy milk');
+    },
+  );
+
+  testWidgets(
+    'wrapped checklist item at the default line spacing: checkbox centers on the first line, not the whole paragraph',
+    (tester) async {
+      const text =
+          'this is a long checklist item that will wrap across more than '
+          'one line inside the narrow editor width used by this test so '
+          'the paragraph spans several lines';
+      await expectCentered(tester, text: text);
+      // Sanity check that the item actually wrapped, or this test proves
+      // nothing about "first line, not whole paragraph".
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'a',
+              text: AttributedText(text),
+              metadata: {'blockType': 'listItemTask'},
+            ),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+      final fieldRect = tester.getRect(find.byType(EditableText).first);
+      final (lineTop, lineBottom) = _firstLineExtent(tester);
+      expect(
+        fieldRect.height,
+        greaterThan(lineBottom - lineTop + 4),
+        reason: 'item must wrap for this test to be meaningful',
+      );
+    },
+  );
+
+  testWidgets(
+    'single-line checklist item at 1.5x line spacing: checkbox still centers on the line',
+    (tester) async {
+      await expectCentered(tester, text: 'buy milk', lineSpacing: 1.5);
+    },
+  );
+
+  testWidgets(
+    'wrapped checklist item at 1.5x line spacing: checkbox still centers on the first line',
+    (tester) async {
+      const text =
+          'this is a long checklist item that will wrap across more than '
+          'one line inside the narrow editor width used by this test so '
+          'the paragraph spans several lines';
+      await expectCentered(tester, text: text, lineSpacing: 1.5);
+    },
+  );
+}
