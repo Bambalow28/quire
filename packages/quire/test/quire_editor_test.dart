@@ -313,6 +313,36 @@ void main() {
     expect(find.text('Start writing…'), findsNothing);
   });
 
+  testWidgets(
+    'the placeholder does not show over an empty checklist item — it is '
+    'content the user created, not an empty document',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'a',
+              text: AttributedText(''),
+              metadata: {'blockType': 'listItemTask'},
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: QuireEditor(
+              controller: controller,
+              placeholder: 'Start writing…',
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Start writing…'), findsNothing);
+    },
+  );
+
   testWidgets('a task item renders a checkbox and tapping toggles the model', (
     tester,
   ) async {

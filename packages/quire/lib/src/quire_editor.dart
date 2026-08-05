@@ -355,7 +355,12 @@ class _QuireEditorState extends State<QuireEditor> {
     final nodes = widget.controller.document.nodes;
     if (nodes.length != 1) return false;
     final only = nodes.first;
-    return only is TextNode && only.text.text.isEmpty;
+    // A checklist/list/header node with no typed text is still content the
+    // user deliberately created — only a plain empty paragraph should show
+    // the placeholder.
+    return only is TextNode &&
+        only.text.text.isEmpty &&
+        only.blockType == 'paragraph';
   }
 
   /// Tapping the empty tail below the last node focuses that node (if it's
