@@ -111,6 +111,32 @@ void main() {
     expect(composer.selection!.extent.nodeId, second.id);
   });
 
+  test(
+    'InsertNewlineRequest on a callout title writes into it, same as a toggle',
+    () {
+      final doc = MutableDocument(
+        nodes: [
+          _para('a', 'Heads up', metadata: {'blockType': 'callout'}),
+        ],
+      );
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(8)),
+        ),
+      );
+      final editor = _editor(doc, composer);
+
+      editor.execute([InsertNewlineRequest()]);
+
+      expect(doc.nodes.length, 2);
+      final first = doc.getNodeAt(0) as TextNode;
+      final second = doc.getNodeAt(1) as TextNode;
+      expect(first.blockType, 'callout');
+      expect(second.blockType, 'paragraph');
+      expect(second.indent, 1);
+    },
+  );
+
   test('InsertNewlineRequest demotes a heading split to paragraph', () {
     final doc = MutableDocument(
       nodes: [

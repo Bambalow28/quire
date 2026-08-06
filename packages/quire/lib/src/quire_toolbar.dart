@@ -463,6 +463,7 @@ class _OptionsPanel extends StatelessWidget {
             ),
             block('Checklist', 'listItemTask', Icons.checklist),
             block('Toggle list', 'toggleList', Icons.arrow_drop_down_circle),
+            block('Callout', 'callout', Icons.rectangle_outlined),
             _OptionRow(
               label: 'Decrease indent',
               icon: Icons.format_indent_decrease,

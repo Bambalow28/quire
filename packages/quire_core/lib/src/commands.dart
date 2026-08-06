@@ -269,12 +269,18 @@ const _headingBlockTypes = {
   'header6',
 };
 
+/// Block types that hold a title line followed by indented content —
+/// `toggleList` (collapsible) and `callout` (a bordered box, always
+/// expanded). Enter-key behavior on the title line, and on an empty content
+/// line, is the same for both.
+const _containerBlockTypes = {'toggleList', 'callout'};
+
 /// Whether [node] is nested — directly or transitively — under a
-/// `toggleList` ancestor. Walks the flat node list backward to the nearest
-/// preceding node at a shallower indent (`node`'s "parent"); if that parent
-/// is a toggle, `node` is its content, otherwise the walk continues from
-/// the parent's own indent.
-bool _isInsideToggle(MutableDocument document, TextNode node) {
+/// `toggleList`/`callout` ancestor. Walks the flat node list backward to
+/// the nearest preceding node at a shallower indent (`node`'s "parent"); if
+/// that parent is a container, `node` is its content, otherwise the walk
+/// continues from the parent's own indent.
+bool _isInsideContainer(MutableDocument document, TextNode node) {
   if (node.indent == 0) return false;
   final nodes = document.nodesInDocumentOrder.toList();
   final index = nodes.indexWhere((n) => n.id == node.id);
@@ -283,28 +289,31 @@ bool _isInsideToggle(MutableDocument document, TextNode node) {
   for (var i = index - 1; i >= 0; i--) {
     final candidate = nodes[i];
     if (candidate is! TextNode || candidate.indent >= currentIndent) continue;
-    if (candidate.blockType == 'toggleList') return true;
+    if (_containerBlockTypes.contains(candidate.blockType)) return true;
     if (candidate.indent == 0) return false;
     currentIndent = candidate.indent;
   }
   return false;
 }
 
-/// The id to insert a new sibling line after when exiting [toggle] — the
+/// The id to insert a new sibling line after when exiting [container] — the
 /// last node of its (possibly hidden, if collapsed) content run, or
-/// [toggle] itself if it has none. Content lives immediately after the
-/// toggle in document order, so inserting right after the toggle instead
-/// would land the new line *ahead of* that content, which severs it from
-/// the toggle (see [_isInsideToggle]: the new line's shallower indent would
-/// become the nearest-ancestor match before the walk ever reaches the
-/// toggle).
-String _lastNodeIdInToggleContent(MutableDocument document, TextNode toggle) {
+/// [container] itself if it has none. Content lives immediately after the
+/// container in document order, so inserting right after it instead would
+/// land the new line *ahead of* that content, which severs it from the
+/// container (see [_isInsideContainer]: the new line's shallower indent
+/// would become the nearest-ancestor match before the walk ever reaches the
+/// container).
+String _lastNodeIdInContainerContent(
+  MutableDocument document,
+  TextNode container,
+) {
   final nodes = document.nodesInDocumentOrder.toList();
-  final index = nodes.indexWhere((n) => n.id == toggle.id);
-  var anchor = toggle.id;
+  final index = nodes.indexWhere((n) => n.id == container.id);
+  var anchor = container.id;
   for (var i = index + 1; i < nodes.length; i++) {
     final candidate = nodes[i];
-    if (candidate is! TextNode || candidate.indent <= toggle.indent) break;
+    if (candidate is! TextNode || candidate.indent <= container.indent) break;
     anchor = candidate.id;
   }
   return anchor;
@@ -323,11 +332,11 @@ class _InsertNewlineCommand extends EditCommand {
     if (node is TextNode) {
       if (node.text.text.isEmpty &&
           node.indent > 0 &&
-          _isInsideToggle(document, node)) {
-        // Enter on an already-empty line inside a toggle's content steps
-        // the line out to the toggle's own indent instead of nesting yet
-        // another empty line — mirrors the outliner "second Enter exits
-        // the list" convention.
+          _isInsideContainer(document, node)) {
+        // Enter on an already-empty line inside a toggle's/callout's
+        // content steps the line out to the container's own indent instead
+        // of nesting yet another empty line — mirrors the outliner "second
+        // Enter exits the list" convention.
         node.metadata['indent'] = node.indent - 1;
         executor.emit(DocumentEdited([node.id]));
         executor.emit(SelectionChanged());
@@ -346,29 +355,31 @@ class _InsertNewlineCommand extends EditCommand {
       if (node.blockType == 'listItemTask') {
         secondMetadata['checked'] = false;
       }
-      if (node.blockType == 'toggleList') {
+      if (_containerBlockTypes.contains(node.blockType)) {
         secondMetadata['blockType'] = 'paragraph';
         secondMetadata.remove('collapsed');
         if (!node.isCollapsed) {
-          // Enter on an *expanded* toggle's title line writes into it, not
-          // another toggle heading below it — the rest of the title (and
-          // everything typed after) becomes the toggle's first line of
-          // content, nested one indent deeper (indent is what marks
-          // content as "inside" a toggle for collapse/expand — see
+          // Enter on an *expanded* toggle's (or a callout's — never
+          // collapsed, so always this branch) title line writes into it,
+          // not another title below it — the rest of the title (and
+          // everything typed after) becomes its first line of content,
+          // nested one indent deeper (indent is what marks content as
+          // "inside" a container for collapse/expand — see
           // quire_editor.dart's `_visibleNodes`).
           secondMetadata['indent'] = node.indent + 1;
         }
         // Collapsed: its content is hidden, so Enter can't mean "write
         // into it" — the new line lands as a plain sibling at the
-        // toggle's own indent instead, same as node.indent above.
+        // container's own indent instead, same as node.indent above.
       }
       final newNode = TextNode(
         id: generateNodeId(),
         text: right,
         metadata: secondMetadata,
       );
-      final insertAfterId = (node.blockType == 'toggleList' && node.isCollapsed)
-          ? _lastNodeIdInToggleContent(document, node)
+      final insertAfterId =
+          (_containerBlockTypes.contains(node.blockType) && node.isCollapsed)
+          ? _lastNodeIdInContainerContent(document, node)
           : node.id;
       document.insertNodeAfter(insertAfterId, newNode);
       context.composer.selection = DocumentSelection.collapsed(

@@ -512,6 +512,34 @@ class _QuireEditorState extends State<QuireEditor> {
     state.showToolbar();
   }
 
+  /// Selects the entire node (paragraph) — a triple-click's job on desktop.
+  /// Each `TextNode` here already IS one paragraph, so "select the
+  /// paragraph" is just "select the whole node's text", no line-boundary
+  /// math needed the way it would be in a plain multi-line text field.
+  void _selectNodeAt(String nodeId) {
+    final state = _editableKeys[nodeId]?.currentState;
+    if (state == null) return;
+    final modelText = _controllers[nodeId]?.attributedText.text ?? '';
+    if (modelText.isEmpty) return;
+    state.userUpdateTextEditingValue(
+      state.textEditingValue.copyWith(
+        selection: TextSelection(
+          baseOffset: _toField(0),
+          extentOffset: _toField(modelText.length),
+        ),
+      ),
+      SelectionChangedCause.longPress,
+    );
+    widget.controller.changeSelection(
+      DocumentSelection(
+        base: DocumentPosition(nodeId, const TextNodePosition(0)),
+        extent: DocumentPosition(nodeId, TextNodePosition(modelText.length)),
+      ),
+    );
+    widget.controller.requestFocus(nodeId);
+    state.showToolbar();
+  }
+
   /// Gives [state]'s field a real non-collapsed local selection (covering
   /// its own full field text) and then opens the toolbar — the same
   /// showToolbar()-needs-a-selection-overlay mechanism [_selectWordAt] uses.
@@ -666,6 +694,34 @@ class _QuireEditorState extends State<QuireEditor> {
   static const _touchHold = Duration(milliseconds: 500);
   static const _touchSlop = 12.0;
 
+  // Desktop double/triple-click word/paragraph selection — mouse/trackpad
+  // only, tracked independently of `_tapRepeatsCaret`/`_tapDownAt` (those
+  // exist for touch's "tap an existing caret to show the toolbar" gesture,
+  // a different thing). Native click-count APIs aren't exposed through a
+  // raw `Listener`, so this reimplements the standard OS heuristic: same
+  // pointer kind, close enough in time and position to the previous
+  // pointer-down, increments the streak; anything else resets it to 1.
+  static const _multiClickTimeout = Duration(milliseconds: 400);
+  static const _multiClickSlop = 6.0;
+  int _clickCount = 0;
+  Offset? _lastClickDownAt;
+  DateTime? _lastClickDownTime;
+
+  int _registerNonTouchClick(Offset position) {
+    final now = DateTime.now();
+    final lastTime = _lastClickDownTime;
+    final lastPosition = _lastClickDownAt;
+    final withinTime =
+        lastTime != null && now.difference(lastTime) < _multiClickTimeout;
+    final withinSlop =
+        lastPosition != null &&
+        (position - lastPosition).distance < _multiClickSlop;
+    _clickCount = (withinTime && withinSlop) ? _clickCount + 1 : 1;
+    _lastClickDownTime = now;
+    _lastClickDownAt = position;
+    return _clickCount;
+  }
+
   void _handlePointerDown(PointerDownEvent event) {
     // A handle's own `Listener` (see [_buildHandle]) is a descendant of this
     // `Listener`, so this still fires for the same down/move/up events
@@ -676,6 +732,11 @@ class _QuireEditorState extends State<QuireEditor> {
     // caret.
     _pointerDownOnHandle = _isOnSelectionHandle(event.position);
     if (_pointerDownOnHandle) return;
+    if (event.kind != PointerDeviceKind.touch) {
+      _registerNonTouchClick(event.position);
+    } else {
+      _clickCount = 0;
+    }
     final position = _positionAt(event.position);
     if (position != null) {
       final offset = (position.nodePosition as TextNodePosition).offset;
@@ -753,6 +814,23 @@ class _QuireEditorState extends State<QuireEditor> {
         // `assert(readOnly && !obscureText)`), which is why this lives here,
         // in the same document-level pointer listener drag-to-select uses.
         launchUrl(Uri.parse(linkUrl), mode: LaunchMode.externalApplication);
+      } else if (event.kind != PointerDeviceKind.touch &&
+          position != null &&
+          _clickCount >= 2) {
+        // Deferred a frame: EditableText's own internal tap recognizer (a
+        // separate gesture recognizer this raw `Listener` can't suppress —
+        // same reason the link-tap branch above can't stop it either) fires
+        // on this same click and would otherwise collapse this selection
+        // right back down a moment later, same race the ponytail note above
+        // hit for touch's double-tap. Writing after that settles instead of
+        // racing it means it survives.
+        final nodeId = position.nodeId;
+        final offset = (position.nodePosition as TextNodePosition).offset;
+        if (_clickCount >= 3) {
+          _selectNodeAt(nodeId);
+        } else {
+          _selectWordAt(nodeId, offset);
+        }
       } else if (_tapRepeatsCaret) {
         final id = widget.controller.focusedNodeId;
         if (id != null) _editableKeys[id]?.currentState?.showToolbar();
@@ -1998,14 +2076,68 @@ class _QuireEditorState extends State<QuireEditor> {
       case 'toggleList':
         return Padding(
           padding: EdgeInsets.only(left: indentPadding, bottom: 4),
-          child: !node.isCollapsed && !_toggleHasContent(node)
+          child: !node.isCollapsed && !_containerHasContent(node)
               ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [row, _buildEmptyToggleHint(context, node)],
+                  children: [row, _buildEmptyContainerHint(context, node)],
                 )
               : row,
         );
+      case 'callout':
+        // Unlike a toggle, a callout's border has to visually wrap its
+        // content too — but content is stored one indent level deeper (the
+        // same marker toggle content uses), which would step the box in on
+        // the left. Render it flush with the title instead; only the data
+        // indent (used to detect "this is callout content") goes deeper.
+        final hasContent = _containerHasContent(node);
+        return Padding(
+          padding: EdgeInsets.only(left: indentPadding, bottom: 4),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.transparent,
+              border: Border.all(color: theme.dividerColor),
+              borderRadius: hasContent
+                  ? const BorderRadius.vertical(top: Radius.circular(8))
+                  : BorderRadius.circular(8),
+            ),
+            child: !hasContent
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [row, _buildEmptyContainerHint(context, node)],
+                  )
+                : row,
+          ),
+        );
       default:
+        final container = _containerParentOf(node);
+        if (container != null && container.blockType == 'callout') {
+          final isLast = _isLastContainerContentNode(node, container);
+          return Padding(
+            // Flush with the callout's own left edge (see the 'callout'
+            // case above) — not this node's own (deeper) indent.
+            padding: EdgeInsets.only(
+              left: container.indent * 24.0,
+              bottom: isLast ? 4 : 0,
+            ),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: theme.dividerColor),
+                  right: BorderSide(color: theme.dividerColor),
+                  bottom: isLast
+                      ? BorderSide(color: theme.dividerColor)
+                      : BorderSide.none,
+                ),
+                borderRadius: isLast
+                    ? const BorderRadius.vertical(bottom: Radius.circular(8))
+                    : null,
+              ),
+              child: row,
+            ),
+          );
+        }
         return Padding(
           padding: EdgeInsets.only(left: indentPadding, bottom: 4),
           child: row,
@@ -2013,31 +2145,34 @@ class _QuireEditorState extends State<QuireEditor> {
     }
   }
 
-  /// Whether [toggle] already has a following node indented deeper than it
-  /// — i.e. content of its own, as opposed to a toggle nobody has written
-  /// into yet. Checked against the raw (unfiltered) node list, not
-  /// [_visibleNodes] — a collapsed toggle's content is hidden from
+  /// Whether [container] already has a following node indented deeper than
+  /// it — i.e. content of its own, as opposed to a toggle/callout nobody
+  /// has written into yet. Checked against the raw (unfiltered) node list,
+  /// not [_visibleNodes] — a collapsed toggle's content is hidden from
   /// rendering but still exists, and still counts as "has content".
-  bool _toggleHasContent(TextNode toggle) {
+  bool _containerHasContent(TextNode container) {
     final nodes = widget.controller.document.nodesInDocumentOrder.toList();
-    final index = nodes.indexWhere((n) => n.id == toggle.id);
+    final index = nodes.indexWhere((n) => n.id == container.id);
     if (index == -1 || index + 1 >= nodes.length) return false;
     final next = nodes[index + 1];
-    return next is TextNode && next.indent > toggle.indent;
+    return next is TextNode && next.indent > container.indent;
   }
 
-  /// Tappable "Empty toggle" placeholder shown under an expanded toggle
-  /// that has no content yet — without it, the only way to discover a
-  /// toggle can hold content is to place the caret at the end of its title
+  /// Tappable "Empty toggle"/"Empty callout" placeholder shown under a
+  /// container with no content yet — without it, the only way to discover
+  /// one can hold content is to place the caret at the end of its title
   /// and press Enter, which isn't obvious just by looking at it.
-  Widget _buildEmptyToggleHint(BuildContext context, TextNode toggle) {
+  Widget _buildEmptyContainerHint(BuildContext context, TextNode container) {
     final theme = Theme.of(context);
+    final label = container.blockType == 'callout'
+        ? 'Empty callout'
+        : 'Empty toggle';
     return Padding(
       padding: const EdgeInsets.only(left: 24, top: 2),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () {
-          final newId = widget.controller.addToggleContent(toggle.id);
+          final newId = widget.controller.addToggleContent(container.id);
           // Deferred a frame — see addToggleContent's doc comment for why
           // requesting focus synchronously here loses a race against this
           // same tap's own document-level pointer handling.
@@ -2052,13 +2187,13 @@ class _QuireEditorState extends State<QuireEditor> {
           });
         },
         child: Text(
-          'Empty toggle',
+          label,
           style:
               (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
                   .copyWith(
                     fontSize:
                         (theme.textTheme.bodyLarge?.fontSize ?? 16) *
-                        _toggleContentScale,
+                        _containerContentScale,
                     fontStyle: FontStyle.italic,
                     color: theme.hintColor,
                   ),
@@ -2100,32 +2235,54 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
-  /// Content nested under a toggle renders at this fraction of the normal
-  /// body size, so it visibly reads as "inside" the toggle rather than a
-  /// same-weight continuation of the title.
-  static const _toggleContentScale = 0.875;
+  /// Content nested under a toggle or callout renders at this fraction of
+  /// the normal body size, so it visibly reads as "inside" the container
+  /// rather than a same-weight continuation of the title.
+  static const _containerContentScale = 0.875;
 
-  /// Whether [node] is nested — directly or transitively, through any
-  /// number of indent levels — under a `toggleList` ancestor. Walks the
-  /// flat node list backward following the indent-tree's parent chain (the
-  /// same one [_visibleNodes] and [ChangeIndentRequest] already imply):
-  /// each step finds the nearest preceding node at a shallower indent
-  /// (`node`'s "parent"); if that parent is a toggle, `node` is its
-  /// content; otherwise the walk continues from the parent's own indent.
-  bool _isInsideToggle(TextNode node) {
-    if (node.indent == 0) return false;
+  /// Block types that hold a title line followed by indented content —
+  /// `toggleList` (collapsible, with a chevron) and `callout` (a bordered
+  /// box, always expanded). Everything that treats "am I inside one of
+  /// these" the same way — content font scaling, the empty-content hint,
+  /// Enter-key behavior — is driven off this one set.
+  static const _containerBlockTypes = {'toggleList', 'callout'};
+
+  /// The nearest `toggleList`/`callout` ancestor [node] is content of, or
+  /// null if it isn't nested under one. Walks the flat node list backward
+  /// following the indent-tree's parent chain (the same one [_visibleNodes]
+  /// and [ChangeIndentRequest] already imply): each step finds the nearest
+  /// preceding node at a shallower indent (`node`'s "parent"); if that
+  /// parent is a container, `node` is its content; otherwise the walk
+  /// continues from the parent's own indent.
+  TextNode? _containerParentOf(TextNode node) {
+    if (node.indent == 0) return null;
     final nodes = widget.controller.document.nodesInDocumentOrder.toList();
     final index = nodes.indexWhere((n) => n.id == node.id);
-    if (index == -1) return false;
+    if (index == -1) return null;
     var currentIndent = node.indent;
     for (var i = index - 1; i >= 0; i--) {
       final candidate = nodes[i];
       if (candidate is! TextNode || candidate.indent >= currentIndent) continue;
-      if (candidate.blockType == 'toggleList') return true;
-      if (candidate.indent == 0) return false;
+      if (_containerBlockTypes.contains(candidate.blockType)) return candidate;
+      if (candidate.indent == 0) return null;
       currentIndent = candidate.indent;
     }
-    return false;
+    return null;
+  }
+
+  bool _isInsideContainer(TextNode node) => _containerParentOf(node) != null;
+
+  /// Whether [node] is the last node in [container]'s content run — i.e.
+  /// the next node in raw document order isn't indented deeper than
+  /// [container]. Used to draw a callout's bottom border/rounded corners on
+  /// the right content line, since its box is stitched together from
+  /// several independently-rendered nodes rather than one widget.
+  bool _isLastContainerContentNode(TextNode node, TextNode container) {
+    final nodes = widget.controller.document.nodesInDocumentOrder.toList();
+    final index = nodes.indexWhere((n) => n.id == node.id);
+    if (index == -1 || index + 1 >= nodes.length) return true;
+    final next = nodes[index + 1];
+    return !(next is TextNode && next.indent > container.indent);
   }
 
   TextStyle _styleFor(ThemeData theme, TextNode node) {
@@ -2137,8 +2294,10 @@ class _QuireEditorState extends State<QuireEditor> {
         color: theme.hintColor,
       );
     }
-    if (_isInsideToggle(node)) {
-      base = base.copyWith(fontSize: (base.fontSize ?? 16) * _toggleContentScale);
+    if (_isInsideContainer(node)) {
+      base = base.copyWith(
+        fontSize: (base.fontSize ?? 16) * _containerContentScale,
+      );
     }
     switch (node.blockType) {
       case 'header1':
