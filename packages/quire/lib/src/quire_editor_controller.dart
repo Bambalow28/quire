@@ -776,7 +776,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   // ponytail: delete-then-insert is two history entries instead of one
   // combined undo step; acceptable since it only affects the multi-node/paste
   // path, not everyday single-character typing.
-  void replaceSelectionWithText(String text) {
+  void replaceSelectionWithText(String text, {bool requestFocusAfter = true}) {
     final selection = composer.selection;
     if (selection == null) return;
     if (!selection.isCollapsed) deleteSelection();
@@ -806,7 +806,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       }
     }
     final id = composer.selection?.extent.nodeId;
-    if (id != null) requestFocus(id);
+    if (requestFocusAfter && id != null) requestFocus(id);
   }
 
   DocumentPosition _startOf(DocumentNode node) => DocumentPosition(

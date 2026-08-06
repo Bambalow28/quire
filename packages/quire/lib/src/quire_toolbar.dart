@@ -229,7 +229,7 @@ class _QuireToolbarState extends State<QuireToolbar>
                       _BarButton(
                         tooltip: 'Link',
                         icon: Icons.link,
-                        iconColor: Colors.grey,
+                        iconColor: Colors.blue,
                         onPressed: () async {
                           final selection = widget.controller.composer.selection;
                           final selectedText = selection == null
@@ -299,6 +299,34 @@ class _QuireToolbarState extends State<QuireToolbar>
     );
   }
 }
+
+/// The emoji picker ships its own light-only default palette — this maps it
+/// onto the host app's [ColorScheme] so it reads as part of the editor
+/// (light or dark) instead of a foreign light popup dropped on top of it.
+Config _emojiPickerConfig(ColorScheme scheme) => Config(
+  emojiViewConfig: EmojiViewConfig(backgroundColor: scheme.surface),
+  categoryViewConfig: CategoryViewConfig(
+    backgroundColor: scheme.surface,
+    indicatorColor: scheme.primary,
+    iconColor: scheme.onSurfaceVariant,
+    iconColorSelected: scheme.primary,
+    backspaceColor: scheme.primary,
+    dividerColor: scheme.outlineVariant,
+  ),
+  bottomActionBarConfig: BottomActionBarConfig(
+    backgroundColor: scheme.surface,
+    buttonColor: scheme.primary,
+    buttonIconColor: scheme.onPrimary,
+  ),
+  searchViewConfig: SearchViewConfig(
+    backgroundColor: scheme.surfaceContainerHighest,
+    buttonIconColor: scheme.onSurfaceVariant,
+  ),
+  skinToneConfig: SkinToneConfig(
+    dialogBackgroundColor: scheme.surface,
+    indicatorColor: scheme.onSurfaceVariant,
+  ),
+);
 
 /// Every action the bar itself no longer has room for, one labelled row each,
 /// scrolling vertically inside the keyboard-sized slot.
@@ -422,8 +450,16 @@ class _OptionsPanel extends StatelessWidget {
                 builder: (_) => SizedBox(
                   height: 320,
                   child: EmojiPicker(
+                    config: _emojiPickerConfig(scheme),
+                    // Picking an emoji shouldn't bring the keyboard back up
+                    // over this sheet — leave the field unfocused so the
+                    // picker stays open for more picks, the same way the
+                    // "+" options panel itself stays open until dismissed.
                     onEmojiSelected: (category, emoji) =>
-                        controller.replaceSelectionWithText(emoji.emoji),
+                        controller.replaceSelectionWithText(
+                          emoji.emoji,
+                          requestFocusAfter: false,
+                        ),
                   ),
                 ),
               ),
@@ -553,7 +589,7 @@ class _BarButton extends StatelessWidget {
   final bool isSelected;
 
   /// Overrides the normal selected/unselected theme color — the Link button
-  /// wants a fixed grey regardless of state, unlike Bold/Italic/Underline.
+  /// wants a fixed link-blue regardless of state, unlike Bold/Italic/Underline.
   final Color? iconColor;
 
   @override

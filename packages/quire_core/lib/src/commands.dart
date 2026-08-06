@@ -327,15 +327,20 @@ class _InsertNewlineCommand extends EditCommand {
         secondMetadata['checked'] = false;
       }
       if (node.blockType == 'toggleList') {
-        // Enter on a toggle's own title line writes *into* it, not another
-        // toggle heading below it — the rest of the title (and everything
-        // typed after) becomes the toggle's first line of content, nested
-        // one indent deeper (indent is what marks content as "inside" a
-        // toggle for collapse/expand — see quire_editor.dart's
-        // `_visibleNodes`).
         secondMetadata['blockType'] = 'paragraph';
-        secondMetadata['indent'] = node.indent + 1;
         secondMetadata.remove('collapsed');
+        if (!node.isCollapsed) {
+          // Enter on an *expanded* toggle's title line writes into it, not
+          // another toggle heading below it — the rest of the title (and
+          // everything typed after) becomes the toggle's first line of
+          // content, nested one indent deeper (indent is what marks
+          // content as "inside" a toggle for collapse/expand — see
+          // quire_editor.dart's `_visibleNodes`).
+          secondMetadata['indent'] = node.indent + 1;
+        }
+        // Collapsed: its content is hidden, so Enter can't mean "write
+        // into it" — the new line lands as a plain sibling at the
+        // toggle's own indent instead, same as node.indent above.
       }
       final newNode = TextNode(
         id: generateNodeId(),

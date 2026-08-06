@@ -168,6 +168,38 @@ void main() {
     expect(child.indent, 1);
   });
 
+  test(
+    'pressing Enter on a collapsed toggle line moves to a sibling line, not hidden content',
+    () {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'toggle',
+              text: AttributedText('Section'),
+              metadata: const {'blockType': 'toggleList', 'collapsed': true},
+            ),
+          ],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('toggle', const TextNodePosition(7)),
+        ),
+      );
+
+      controller.insertNewline();
+
+      final nodes = controller.document.nodesInDocumentOrder.toList();
+      expect(nodes, hasLength(2));
+      final sibling = nodes[1] as TextNode;
+      expect(sibling.blockType, 'paragraph');
+      expect(sibling.indent, 0);
+      final toggle = nodes[0] as TextNode;
+      expect(toggle.isCollapsed, isTrue);
+    },
+  );
+
   testWidgets(
     'an empty expanded toggle shows an "Empty toggle" hint; tapping it starts content',
     (tester) async {
