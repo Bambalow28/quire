@@ -125,4 +125,47 @@ void main() {
     // node uppercase — unrelated to link detection, just along for the ride.
     expect(node.text.text, 'Just some words, not a url');
   });
+
+  testWidgets('tapping link text opens it instead of placing the caret there', (
+    tester,
+  ) async {
+    final launched = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/url_launcher'),
+          (call) async {
+            if (call.method == 'launch' || call.method == 'launchUrl') {
+              launched.add((call.arguments as Map)['url'] as String);
+              return true;
+            }
+            if (call.method == 'canLaunch') return true;
+            return null;
+          },
+        );
+
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('click here', [
+              AttributionSpan(
+                const Attribution('link', value: {'url': 'https://example.com'}),
+                0,
+                10,
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+    );
+
+    await tester.tap(find.byType(EditableText).first);
+    await tester.pumpAndSettle();
+
+    expect(launched, ['https://example.com']);
+  });
 }

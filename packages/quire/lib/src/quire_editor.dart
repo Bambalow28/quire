@@ -7,6 +7,7 @@ import 'package:flutter/rendering.dart' show RenderEditable;
 import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'link_dialog.dart';
 import 'node_text_controller.dart';
@@ -624,6 +625,30 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
+  /// The URL of the `'link'` attribution covering [position], or `null` if
+  /// it isn't on a link — checked on every tap-up so tapping a link opens it
+  /// instead of just moving the caret there.
+  String? _linkUrlAt(DocumentPosition position) {
+    final node = widget.controller.document.getNodeById(position.nodeId);
+    if (node is! TextNode) return null;
+    final nodePosition = position.nodePosition;
+    if (nodePosition is! TextNodePosition) return null;
+    final offset = nodePosition.offset;
+    // attributionsAt is exclusive of the end offset, same as
+    // AttributionSpan's own [start, end) convention (see attributed_text.dart)
+    // — a tap right at a link's trailing edge falls just outside it, checked
+    // one offset earlier instead so the last character still counts.
+    for (final check in {offset, offset - 1}) {
+      if (check < 0 || check >= node.text.text.length) continue;
+      final link = node.text
+          .attributionsAt(check)
+          .where((a) => a.name == 'link')
+          .firstOrNull;
+      if (link != null) return link.value['url'] as String?;
+    }
+    return null;
+  }
+
   static const _touchHold = Duration(milliseconds: 500);
   static const _touchSlop = 12.0;
 
@@ -703,7 +728,18 @@ class _QuireEditorState extends State<QuireEditor> {
       // Long-press covers word selection on touch; revisit with the
       // editor-level DeltaTextInputClient rewrite.
       final position = _positionAt(event.position);
-      if (_tapRepeatsCaret) {
+      final linkUrl = position == null ? null : _linkUrlAt(position);
+      if (linkUrl != null) {
+        // Skips this listener's own caret placement below — EditableText's
+        // own internal tap handling still focuses/places its caret alongside
+        // this (it's a separate gesture recognizer this Listener can't
+        // suppress), so the field ends up focused too. Not worth fighting:
+        // EditableText has no read-only-free way to attach a tap recognizer
+        // to a span instead (see RenderEditable.describeSemanticsConfiguration's
+        // `assert(readOnly && !obscureText)`), which is why this lives here,
+        // in the same document-level pointer listener drag-to-select uses.
+        launchUrl(Uri.parse(linkUrl), mode: LaunchMode.externalApplication);
+      } else if (_tapRepeatsCaret) {
         final id = widget.controller.focusedNodeId;
         if (id != null) _editableKeys[id]?.currentState?.showToolbar();
       } else if (position != null && _dragBase == null) {
