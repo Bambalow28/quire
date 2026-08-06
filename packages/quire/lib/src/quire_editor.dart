@@ -1995,12 +1995,76 @@ class _QuireEditorState extends State<QuireEditor> {
           ),
           child: row,
         );
+      case 'toggleList':
+        return Padding(
+          padding: EdgeInsets.only(left: indentPadding, bottom: 4),
+          child: !node.isCollapsed && !_toggleHasContent(node)
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [row, _buildEmptyToggleHint(context, node)],
+                )
+              : row,
+        );
       default:
         return Padding(
           padding: EdgeInsets.only(left: indentPadding, bottom: 4),
           child: row,
         );
     }
+  }
+
+  /// Whether [toggle] already has a following node indented deeper than it
+  /// — i.e. content of its own, as opposed to a toggle nobody has written
+  /// into yet. Checked against the raw (unfiltered) node list, not
+  /// [_visibleNodes] — a collapsed toggle's content is hidden from
+  /// rendering but still exists, and still counts as "has content".
+  bool _toggleHasContent(TextNode toggle) {
+    final nodes = widget.controller.document.nodesInDocumentOrder.toList();
+    final index = nodes.indexWhere((n) => n.id == toggle.id);
+    if (index == -1 || index + 1 >= nodes.length) return false;
+    final next = nodes[index + 1];
+    return next is TextNode && next.indent > toggle.indent;
+  }
+
+  /// Tappable "Empty toggle" placeholder shown under an expanded toggle
+  /// that has no content yet — without it, the only way to discover a
+  /// toggle can hold content is to place the caret at the end of its title
+  /// and press Enter, which isn't obvious just by looking at it.
+  Widget _buildEmptyToggleHint(BuildContext context, TextNode toggle) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 24, top: 2),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          final newId = widget.controller.addToggleContent(toggle.id);
+          // Deferred a frame — see addToggleContent's doc comment for why
+          // requesting focus synchronously here loses a race against this
+          // same tap's own document-level pointer handling.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            widget.controller.requestFocus(newId);
+            widget.controller.changeSelection(
+              DocumentSelection.collapsed(
+                DocumentPosition(newId, const TextNodePosition(0)),
+              ),
+            );
+          });
+        },
+        child: Text(
+          'Empty toggle',
+          style:
+              (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+                  .copyWith(
+                    fontSize:
+                        (theme.textTheme.bodyLarge?.fontSize ?? 16) *
+                        _toggleContentScale,
+                    fontStyle: FontStyle.italic,
+                    color: theme.hintColor,
+                  ),
+        ),
+      ),
+    );
   }
 
   Widget _buildImageNode(BuildContext context, ImageNode node) {
@@ -2036,6 +2100,34 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
+  /// Content nested under a toggle renders at this fraction of the normal
+  /// body size, so it visibly reads as "inside" the toggle rather than a
+  /// same-weight continuation of the title.
+  static const _toggleContentScale = 0.875;
+
+  /// Whether [node] is nested — directly or transitively, through any
+  /// number of indent levels — under a `toggleList` ancestor. Walks the
+  /// flat node list backward following the indent-tree's parent chain (the
+  /// same one [_visibleNodes] and [ChangeIndentRequest] already imply):
+  /// each step finds the nearest preceding node at a shallower indent
+  /// (`node`'s "parent"); if that parent is a toggle, `node` is its
+  /// content; otherwise the walk continues from the parent's own indent.
+  bool _isInsideToggle(TextNode node) {
+    if (node.indent == 0) return false;
+    final nodes = widget.controller.document.nodesInDocumentOrder.toList();
+    final index = nodes.indexWhere((n) => n.id == node.id);
+    if (index == -1) return false;
+    var currentIndent = node.indent;
+    for (var i = index - 1; i >= 0; i--) {
+      final candidate = nodes[i];
+      if (candidate is! TextNode || candidate.indent >= currentIndent) continue;
+      if (candidate.blockType == 'toggleList') return true;
+      if (candidate.indent == 0) return false;
+      currentIndent = candidate.indent;
+    }
+    return false;
+  }
+
   TextStyle _styleFor(ThemeData theme, TextNode node) {
     var base = (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
         .copyWith(height: node.lineSpacing);
@@ -2044,6 +2136,9 @@ class _QuireEditorState extends State<QuireEditor> {
         decoration: TextDecoration.lineThrough,
         color: theme.hintColor,
       );
+    }
+    if (_isInsideToggle(node)) {
+      base = base.copyWith(fontSize: (base.fontSize ?? 16) * _toggleContentScale);
     }
     switch (node.blockType) {
       case 'header1':

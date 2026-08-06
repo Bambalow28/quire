@@ -167,4 +167,114 @@ void main() {
     expect(child.blockType, 'paragraph');
     expect(child.indent, 1);
   });
+
+  testWidgets(
+    'an empty expanded toggle shows an "Empty toggle" hint; tapping it starts content',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'toggle',
+              text: AttributedText('Section'),
+              metadata: const {'blockType': 'toggleList'},
+            ),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      expect(find.text('Empty toggle'), findsOneWidget);
+
+      await tester.tap(find.text('Empty toggle'));
+      await tester.pump();
+
+      final nodes = controller.document.nodesInDocumentOrder.toList();
+      expect(nodes, hasLength(2));
+      final child = nodes[1] as TextNode;
+      expect(child.indent, 1);
+      expect(child.text.text, isEmpty);
+      expect(controller.focusedNodeId, child.id);
+
+      // The hint disappears once the toggle actually has content.
+      await tester.pump();
+      expect(find.text('Empty toggle'), findsNothing);
+    },
+  );
+
+  testWidgets('a collapsed empty toggle does not show the hint', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'toggle',
+            text: AttributedText('Section'),
+            metadata: const {'blockType': 'toggleList', 'collapsed': true},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    expect(find.text('Empty toggle'), findsNothing);
+  });
+
+  testWidgets('a toggle that already has content does not show the hint', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'toggle',
+            text: AttributedText('Section'),
+            metadata: const {'blockType': 'toggleList'},
+          ),
+          TextNode(
+            id: 'child',
+            text: AttributedText('already here'),
+            metadata: const {'indent': 1},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    expect(find.text('Empty toggle'), findsNothing);
+  });
+
+  testWidgets('toggle content renders smaller than the toggle title', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'toggle',
+            text: AttributedText('Section'),
+            metadata: const {'blockType': 'toggleList'},
+          ),
+          TextNode(
+            id: 'child',
+            text: AttributedText('inside'),
+            metadata: const {'indent': 1},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    final titleField = tester.widget<EditableText>(
+      find.byType(EditableText).first,
+    );
+    final contentField = tester.widget<EditableText>(
+      find.byType(EditableText).at(1),
+    );
+    expect(
+      contentField.style.fontSize,
+      lessThan(titleField.style.fontSize!),
+    );
+  });
 }

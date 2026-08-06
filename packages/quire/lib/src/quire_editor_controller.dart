@@ -92,6 +92,31 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   void toggleCollapsed(String nodeId) =>
       history.execute([ToggleCollapsedRequest(nodeId)]);
 
+  /// Inserts an empty paragraph right after [toggleNodeId], indented one
+  /// level deeper, and returns its id — what tapping an empty toggle's
+  /// "Empty toggle" hint does, so a toggle with no content yet doesn't
+  /// require pressing Enter on its title first to get content into it.
+  ///
+  /// Doesn't focus the new node itself — the tap that calls this also
+  /// reaches the editor's own document-level pointer handling (a `Listener`
+  /// sees every pointer event regardless of gesture-arena/widget-tree
+  /// nesting), which requests focus on whatever node it resolves the tap
+  /// nearest to; doing it here too just races that and sometimes loses.
+  /// The caller defers its own focus request a frame to reliably go last.
+  String addToggleContent(String toggleNodeId) {
+    final toggle = document.getNodeById(toggleNodeId);
+    if (toggle is! TextNode) return toggleNodeId;
+    final newNode = TextNode(
+      id: generateNodeId(),
+      text: AttributedText(''),
+      metadata: {'indent': toggle.indent + 1},
+    );
+    history.execute([
+      InsertNodeRequest(newNode, afterNodeId: toggleNodeId),
+    ]);
+    return newNode.id;
+  }
+
   /// Inserts [displayText] carrying a `'link'` attribution pointing at
   /// [url], replacing the current selection if there is one. The toolbar's
   /// Link button and paste's URL-detection both route through this — it's
