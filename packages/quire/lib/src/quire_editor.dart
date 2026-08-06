@@ -155,6 +155,12 @@ class _QuireEditorState extends State<QuireEditor> {
   Rect? _startHandleHitRect;
   Rect? _endHandleHitRect;
 
+  /// The most recent pointer kind seen in [_handlePointerDown] — used only
+  /// to decide whether to render touch-style selection handles (see
+  /// [_buildSelectionHandles]); everything else already branches on the
+  /// current event's own `kind` directly.
+  PointerDeviceKind? _lastPointerKind;
+
   /// Whether the pointer currently down started on a handle — see the
   /// comment in [_handlePointerDown] for why [_handlePointerUp] needs this
   /// instead of just re-checking the up position.
@@ -382,7 +388,9 @@ class _QuireEditorState extends State<QuireEditor> {
         collapsedAtIndent = null;
       }
       visible.add(node);
-      if (node is TextNode && node.blockType == 'toggleList' && node.isCollapsed) {
+      if (node is TextNode &&
+          node.blockType == 'toggleList' &&
+          node.isCollapsed) {
         collapsedAtIndent = indent;
       }
     }
@@ -480,6 +488,26 @@ class _QuireEditorState extends State<QuireEditor> {
 
   bool _isSpace(String ch) => ch == ' ' || ch == '\t' || ch == '\n';
 
+  /// Set while a deliberate non-collapsed same-node selection (word or
+  /// paragraph select) is being applied, so [_onControllerChanged]'s
+  /// selection-only path ignores the stale collapsed report that
+  /// `EditableText`'s own internal tap-up handling still produces for the
+  /// same physical click a moment later (it can't be suppressed — see the
+  /// link-tap comment in [_handlePointerUp] for why). Without this, that
+  /// stale report — which the guard below can't otherwise tell apart from a
+  /// real one, since both are same-node — silently collapses the selection
+  /// right back down. Cleared a frame later, once that stale report has had
+  /// its chance to arrive.
+  bool _suppressFieldSelectionSync = false;
+
+  void _applyThenSuppressStaleReport(VoidCallback apply) {
+    _suppressFieldSelectionSync = true;
+    apply();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _suppressFieldSelectionSync = false;
+    });
+  }
+
   /// Selects the word under [offset] and opens the toolbar — what a
   /// double-tap or long-press does in any native text field, and the only
   /// way to get Cut/Copy, which need a non-empty selection.
@@ -493,23 +521,25 @@ class _QuireEditorState extends State<QuireEditor> {
     final modelText = _controllers[nodeId]?.attributedText.text ?? '';
     final (wordStart, wordEnd) = _wordBoundaryIn(modelText, offset);
     if (wordEnd <= wordStart) return;
-    state.userUpdateTextEditingValue(
-      state.textEditingValue.copyWith(
-        selection: TextSelection(
-          baseOffset: _toField(wordStart),
-          extentOffset: _toField(wordEnd),
+    _applyThenSuppressStaleReport(() {
+      state.userUpdateTextEditingValue(
+        state.textEditingValue.copyWith(
+          selection: TextSelection(
+            baseOffset: _toField(wordStart),
+            extentOffset: _toField(wordEnd),
+          ),
         ),
-      ),
-      SelectionChangedCause.longPress,
-    );
-    widget.controller.changeSelection(
-      DocumentSelection(
-        base: DocumentPosition(nodeId, TextNodePosition(wordStart)),
-        extent: DocumentPosition(nodeId, TextNodePosition(wordEnd)),
-      ),
-    );
-    widget.controller.requestFocus(nodeId);
-    state.showToolbar();
+        SelectionChangedCause.longPress,
+      );
+      widget.controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition(nodeId, TextNodePosition(wordStart)),
+          extent: DocumentPosition(nodeId, TextNodePosition(wordEnd)),
+        ),
+      );
+      widget.controller.requestFocus(nodeId);
+      state.showToolbar();
+    });
   }
 
   /// Selects the entire node (paragraph) — a triple-click's job on desktop.
@@ -521,23 +551,25 @@ class _QuireEditorState extends State<QuireEditor> {
     if (state == null) return;
     final modelText = _controllers[nodeId]?.attributedText.text ?? '';
     if (modelText.isEmpty) return;
-    state.userUpdateTextEditingValue(
-      state.textEditingValue.copyWith(
-        selection: TextSelection(
-          baseOffset: _toField(0),
-          extentOffset: _toField(modelText.length),
+    _applyThenSuppressStaleReport(() {
+      state.userUpdateTextEditingValue(
+        state.textEditingValue.copyWith(
+          selection: TextSelection(
+            baseOffset: _toField(0),
+            extentOffset: _toField(modelText.length),
+          ),
         ),
-      ),
-      SelectionChangedCause.longPress,
-    );
-    widget.controller.changeSelection(
-      DocumentSelection(
-        base: DocumentPosition(nodeId, const TextNodePosition(0)),
-        extent: DocumentPosition(nodeId, TextNodePosition(modelText.length)),
-      ),
-    );
-    widget.controller.requestFocus(nodeId);
-    state.showToolbar();
+        SelectionChangedCause.longPress,
+      );
+      widget.controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition(nodeId, const TextNodePosition(0)),
+          extent: DocumentPosition(nodeId, TextNodePosition(modelText.length)),
+        ),
+      );
+      widget.controller.requestFocus(nodeId);
+      state.showToolbar();
+    });
   }
 
   /// Gives [state]'s field a real non-collapsed local selection (covering
@@ -732,6 +764,7 @@ class _QuireEditorState extends State<QuireEditor> {
     // caret.
     _pointerDownOnHandle = _isOnSelectionHandle(event.position);
     if (_pointerDownOnHandle) return;
+    _lastPointerKind = event.kind;
     if (event.kind != PointerDeviceKind.touch) {
       _registerNonTouchClick(event.position);
     } else {
@@ -772,7 +805,8 @@ class _QuireEditorState extends State<QuireEditor> {
         if (held != null) {
           final offset = (held.nodePosition as TextNodePosition).offset;
           _selectWordAt(held.nodeId, offset);
-          final modelText = _controllers[held.nodeId]?.attributedText.text ?? '';
+          final modelText =
+              _controllers[held.nodeId]?.attributedText.text ?? '';
           final (wordStart, wordEnd) = _wordBoundaryIn(modelText, offset);
           _wordDragAnchor = (
             DocumentPosition(held.nodeId, TextNodePosition(wordStart)),
@@ -817,13 +851,14 @@ class _QuireEditorState extends State<QuireEditor> {
       } else if (event.kind != PointerDeviceKind.touch &&
           position != null &&
           _clickCount >= 2) {
-        // Deferred a frame: EditableText's own internal tap recognizer (a
-        // separate gesture recognizer this raw `Listener` can't suppress —
-        // same reason the link-tap branch above can't stop it either) fires
-        // on this same click and would otherwise collapse this selection
-        // right back down a moment later, same race the ponytail note above
-        // hit for touch's double-tap. Writing after that settles instead of
-        // racing it means it survives.
+        // EditableText's own internal tap recognizer (a separate gesture
+        // recognizer this raw `Listener` can't suppress — same reason the
+        // link-tap branch above can't stop it either) fires on this same
+        // click a moment later and would otherwise collapse this selection
+        // right back down, same race the ponytail note above hit for
+        // touch's double-tap — `_selectWordAt`/`_selectNodeAt` guard against
+        // it themselves now (see `_suppressFieldSelectionSync`), so this can
+        // just call them directly.
         final nodeId = position.nodeId;
         final offset = (position.nodePosition as TextNodePosition).offset;
         if (_clickCount >= 3) {
@@ -1169,9 +1204,17 @@ class _QuireEditorState extends State<QuireEditor> {
   /// selection, single-node or multi-node — native `EditableText` handles are
   /// disabled (see the `selectionControls:` comment on the field), so quire's
   /// own handles are the only ones there are.
+  ///
+  /// Skipped for a mouse/trackpad/stylus-made selection: these are sized and
+  /// styled for a fingertip, and no native desktop app shows drag handles
+  /// for a selection a precise pointer already made by dragging — the
+  /// selection highlight itself (from `SelectionOverlayPainter`/the field's
+  /// own `selectionColor`) is enough there.
   List<Widget> _buildSelectionHandles(BuildContext context) {
     final selection = widget.controller.composer.selection;
-    if (selection == null || selection.isCollapsed) {
+    if (selection == null ||
+        selection.isCollapsed ||
+        _lastPointerKind == PointerDeviceKind.mouse) {
       _startHandleHitRect = null;
       _endHandleHitRect = null;
       return const [];
@@ -1253,7 +1296,8 @@ class _QuireEditorState extends State<QuireEditor> {
   /// own (unscrolled) size, so its global rect IS the viewport, and is what
   /// [_autoscrollVelocityFor] measures the finger's distance from.
   Rect? _viewportRect() {
-    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (editorBox == null || !editorBox.attached) return null;
     return editorBox.localToGlobal(Offset.zero) & editorBox.size;
   }
@@ -1324,9 +1368,13 @@ class _QuireEditorState extends State<QuireEditor> {
       return;
     }
     final scrollPosition = _scrollController.position;
-    final newOffset = (scrollPosition.pixels +
-            velocity * _autoscrollTick.inMilliseconds / 1000)
-        .clamp(scrollPosition.minScrollExtent, scrollPosition.maxScrollExtent);
+    final newOffset =
+        (scrollPosition.pixels +
+                velocity * _autoscrollTick.inMilliseconds / 1000)
+            .clamp(
+              scrollPosition.minScrollExtent,
+              scrollPosition.maxScrollExtent,
+            );
     if (newOffset != scrollPosition.pixels) _scrollController.jumpTo(newOffset);
     _updateDragSelectionAt(position);
   }
@@ -1605,6 +1653,7 @@ class _QuireEditorState extends State<QuireEditor> {
 
     final selection = controller.selection;
     if (!selection.isValid) return;
+    if (_suppressFieldSelectionSync) return;
 
     // With a cross-node selection active, this field only ever holds a
     // stale local caret (see `_pushModelToControllers`) — a selection-only
@@ -1672,6 +1721,36 @@ class _QuireEditorState extends State<QuireEditor> {
   /// binding would otherwise corrupt).
   // ponytail: a soft keyboard sends no key event, and thus no deletion
   // delta, when there's nothing left to delete — so paragraph-merge via
+  /// Moves the caret into the next (or, for `forward: false`, the previous)
+  /// `TextNode` — landing at its start when arriving from the left/above, or
+  /// its end when arriving from the right/below, the same convention every
+  /// desktop text editor uses for Left/Right running off a paragraph's edge.
+  /// Skips non-text nodes (images, tables, rules) since they have no caret
+  /// position of their own; a document that starts or ends with one still
+  /// works, the search just keeps going until it finds a `TextNode` or runs
+  /// out of document.
+  void _moveToAdjacentNode(String nodeId, {required bool forward}) {
+    final nodes = widget.controller.document.nodesInDocumentOrder;
+    final index = nodes.indexWhere((n) => n.id == nodeId);
+    if (index == -1) return;
+    for (
+      var i = index + (forward ? 1 : -1);
+      forward ? i < nodes.length : i >= 0;
+      forward ? i++ : i--
+    ) {
+      final target = nodes[i];
+      if (target is! TextNode) continue;
+      final offset = forward ? 0 : target.text.text.length;
+      widget.controller.requestFocus(target.id);
+      widget.controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition(target.id, TextNodePosition(offset)),
+        ),
+      );
+      return;
+    }
+  }
+
   // Backspace is unavailable on touch (still works with a hardware
   // keyboard/Backspace-as-delete on desktop). Upgrade path: an editor-level
   // DeltaTextInputClient, which sees the IME's actual delete requests
@@ -1694,6 +1773,13 @@ class _QuireEditorState extends State<QuireEditor> {
           widget.controller.toggleUnderline,
       const SingleActivator(LogicalKeyboardKey.keyU, control: true):
           widget.controller.toggleUnderline,
+      const SingleActivator(LogicalKeyboardKey.keyX, meta: true, shift: true):
+          widget.controller.toggleStrikethrough,
+      const SingleActivator(
+        LogicalKeyboardKey.keyX,
+        control: true,
+        shift: true,
+      ): widget.controller.toggleStrikethrough,
       const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
           widget.controller.undo,
       const SingleActivator(LogicalKeyboardKey.keyZ, control: true):
@@ -1741,6 +1827,33 @@ class _QuireEditorState extends State<QuireEditor> {
         if (selection.baseOffset == 0) {
           bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>
               widget.controller.mergeWithPrevious(nodeId);
+        }
+      }
+
+      // Cross-node Left/Right — bound only when the caret is already at
+      // this node's own edge, so every other Left/Right press still falls
+      // through to `EditableText`'s normal intra-paragraph caret movement
+      // (a `CallbackShortcuts` entry always consumes its key once bound —
+      // this is why these are added conditionally rather than checking the
+      // boundary inside the callback).
+      if (docSelection != null &&
+          docSelection.isCollapsed &&
+          docSelection.extent.nodeId == nodeId) {
+        final offset =
+            (docSelection.extent.nodePosition as TextNodePosition).offset;
+        final node = widget.controller.document.getNodeById(nodeId);
+        final textLength = node is TextNode ? node.text.text.length : 0;
+        if (offset == 0) {
+          bindings[const SingleActivator(LogicalKeyboardKey.arrowLeft)] = () =>
+              _moveToAdjacentNode(nodeId, forward: false);
+          bindings[const SingleActivator(LogicalKeyboardKey.arrowUp)] = () =>
+              _moveToAdjacentNode(nodeId, forward: false);
+        }
+        if (offset == textLength) {
+          bindings[const SingleActivator(LogicalKeyboardKey.arrowRight)] = () =>
+              _moveToAdjacentNode(nodeId, forward: true);
+          bindings[const SingleActivator(LogicalKeyboardKey.arrowDown)] = () =>
+              _moveToAdjacentNode(nodeId, forward: true);
         }
       }
     }
@@ -1872,7 +1985,8 @@ class _QuireEditorState extends State<QuireEditor> {
   void _scheduleChecklistBoxMeasurement(String nodeId) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final renderEditable = _editableKeys[nodeId]?.currentState?.renderEditable;
+      final renderEditable =
+          _editableKeys[nodeId]?.currentState?.renderEditable;
       final fieldLength = _controllers[nodeId]?.text.length;
       if (renderEditable == null || fieldLength == null || fieldLength < 1) {
         return;
@@ -1909,132 +2023,143 @@ class _QuireEditorState extends State<QuireEditor> {
     // Raw EditableText installs no tap recognizer of its own (that's defect
     // 1) — onTapDown, not onTap, so the caret lands with the touch the way a
     // real text field feels.
-    final field = CallbackShortcuts(
-      bindings: _shortcutBindings(node.id),
-      child: EditableText(
-        key: editableKey,
-        controller: controller,
-        focusNode: focusNode,
-        style: _styleFor(theme, node),
-        textAlign: _textAlignFor(node),
-        // EditableText hard-defaults this to Brightness.light (unlike
-        // TextField, which follows the theme), so an iOS keyboard would
-        // come up light inside a dark app.
-        keyboardAppearance: theme.brightness,
-        // Flutter's own predictive-text bar has no completions behind it —
-        // it just reserves the row and leaves it blank. `enableSuggestions`
-        // alone doesn't touch this: on iOS the QuickType bar is tied to
-        // autocorrect, not suggestions (Flutter's own doc comment on
-        // enableSuggestions says as much) — autocorrect is what actually
-        // removes the row instead of showing it empty.
-        enableSuggestions: false,
-        autocorrect: false,
-        // Soft-keyboard auto-shift for the first letter of a sentence. This
-        // is a hint to the platform keyboard only — it never mutates typed
-        // text itself, so intentional lowercase still goes through untouched.
-        textCapitalization: TextCapitalization.sentences,
-        cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
-        backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
-        selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
-        maxLines: null,
-        keyboardType: TextInputType.multiline,
-        textInputAction: TextInputAction.newline,
-        // Native handles are disabled: selection is one-way (composer ->
-        // field, see `_pushModelToControllers`), so a native handle drag only
-        // ever mutates this field's local selection, which the next rebuild
-        // overwrites with the stale composer selection, snapping the drag
-        // back. Quire drives its own handles against `composer.selection`
-        // instead (see `_buildSelectionHandles`) — the field still paints its
-        // own selection highlight via `selectionColor`, only the draggable
-        // handles are quire's. Not literally `null` — see
-        // [_NoHandleTextSelectionControls]'s doc comment for why.
-        selectionControls: _noHandleTextSelectionControls,
-        // Flutter's default menu offers only Select All on a collapsed
-        // caret — Cut and Copy need a selection, and it has no built-in
-        // "Select" (this word) button the way iOS does. Prepend one, so
-        // tapping the caret gives Select / Select all / Paste, and choosing
-        // Select puts Cut and Copy one tap away.
-        contextMenuBuilder: (context, state) {
-          final value = state.textEditingValue;
-          final canSelectWord =
-              value.selection.isCollapsed && value.text.isNotEmpty;
-          final docSelection = widget.controller.composer.selection;
-          // Cut/Copy/Paste's built-in handlers act on this field's own
-          // (possibly stale, see `_pushModelToControllers`) local selection
-          // only — fine for a same-node selection, wrong once the document
-          // selection spans more than one node, where they need to act on
-          // the whole thing instead.
-          final isCrossNode =
-              docSelection != null &&
-              docSelection.base.nodeId != docSelection.extent.nodeId;
-          return AdaptiveTextSelectionToolbar.buttonItems(
-            anchors: state.contextMenuAnchors,
-            buttonItems: [
-              if (canSelectWord)
-                ContextMenuButtonItem(
-                  label: 'Select',
-                  onPressed: () {
-                    state.hideToolbar();
-                    _selectWordAt(
-                      node.id,
-                      _toModel(
-                        value.selection.baseOffset,
-                        node.text.text.length,
-                      ),
-                    );
-                  },
-                ),
-              // EditableText's own "Select All" button (from
-              // state.contextMenuButtonItems below) selects only within
-              // this one field's own text — there's no touch path to the
-              // document-wide controller.selectAll() otherwise (Cmd/Ctrl+A
-              // only fires from a hardware keyboard). Replace it so the one
-              // "Select All" button touch users actually have reaches the
-              // whole document, the way the drag handles expect.
-              for (final item in state.contextMenuButtonItems)
-                if (item.type == ContextMenuButtonType.selectAll)
+    //
+    // MouseRegion sets the I-beam cursor over the text itself — EditableText
+    // doesn't do this on its own since it has no gesture/cursor wiring of
+    // its own either (same "defect 1"). SystemMouseCursors.text is a no-op
+    // on touch (there's no mouse pointer to show it on), so this is safe to
+    // apply unconditionally rather than gating it on pointer kind.
+    final field = MouseRegion(
+      cursor: SystemMouseCursors.text,
+      child: CallbackShortcuts(
+        bindings: _shortcutBindings(node.id),
+        child: EditableText(
+          key: editableKey,
+          controller: controller,
+          focusNode: focusNode,
+          style: _styleFor(theme, node),
+          textAlign: _textAlignFor(node),
+          // EditableText hard-defaults this to Brightness.light (unlike
+          // TextField, which follows the theme), so an iOS keyboard would
+          // come up light inside a dark app.
+          keyboardAppearance: theme.brightness,
+          // Flutter's own predictive-text bar has no completions behind it —
+          // it just reserves the row and leaves it blank. `enableSuggestions`
+          // alone doesn't touch this: on iOS the QuickType bar is tied to
+          // autocorrect, not suggestions (Flutter's own doc comment on
+          // enableSuggestions says as much) — autocorrect is what actually
+          // removes the row instead of showing it empty.
+          enableSuggestions: false,
+          autocorrect: false,
+          // Soft-keyboard auto-shift for the first letter of a sentence. This
+          // is a hint to the platform keyboard only — it never mutates typed
+          // text itself, so intentional lowercase still goes through untouched.
+          textCapitalization: TextCapitalization.sentences,
+          cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
+          backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
+          selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
+          maxLines: null,
+          keyboardType: TextInputType.multiline,
+          textInputAction: TextInputAction.newline,
+          // Native handles are disabled: selection is one-way (composer ->
+          // field, see `_pushModelToControllers`), so a native handle drag only
+          // ever mutates this field's local selection, which the next rebuild
+          // overwrites with the stale composer selection, snapping the drag
+          // back. Quire drives its own handles against `composer.selection`
+          // instead (see `_buildSelectionHandles`) — the field still paints its
+          // own selection highlight via `selectionColor`, only the draggable
+          // handles are quire's. Not literally `null` — see
+          // [_NoHandleTextSelectionControls]'s doc comment for why.
+          selectionControls: _noHandleTextSelectionControls,
+          // Flutter's default menu offers only Select All on a collapsed
+          // caret — Cut and Copy need a selection, and it has no built-in
+          // "Select" (this word) button the way iOS does. Prepend one, so
+          // tapping the caret gives Select / Select all / Paste, and choosing
+          // Select puts Cut and Copy one tap away.
+          contextMenuBuilder: (context, state) {
+            final value = state.textEditingValue;
+            final canSelectWord =
+                value.selection.isCollapsed && value.text.isNotEmpty;
+            final docSelection = widget.controller.composer.selection;
+            // Cut/Copy/Paste's built-in handlers act on this field's own
+            // (possibly stale, see `_pushModelToControllers`) local selection
+            // only — fine for a same-node selection, wrong once the document
+            // selection spans more than one node, where they need to act on
+            // the whole thing instead.
+            final isCrossNode =
+                docSelection != null &&
+                docSelection.base.nodeId != docSelection.extent.nodeId;
+            return AdaptiveTextSelectionToolbar.buttonItems(
+              anchors: state.contextMenuAnchors,
+              buttonItems: [
+                if (canSelectWord)
                   ContextMenuButtonItem(
-                    label: item.label,
-                    type: ContextMenuButtonType.selectAll,
+                    label: 'Select',
                     onPressed: () {
                       state.hideToolbar();
-                      widget.controller.selectAll();
-                      _showToolbarForWholeField(state);
+                      _selectWordAt(
+                        node.id,
+                        _toModel(
+                          value.selection.baseOffset,
+                          node.text.text.length,
+                        ),
+                      );
                     },
-                  )
-                else if (isCrossNode && item.type == ContextMenuButtonType.copy)
-                  ContextMenuButtonItem(
-                    label: item.label,
-                    type: ContextMenuButtonType.copy,
-                    onPressed: () {
-                      state.hideToolbar();
-                      widget.controller.copySelection();
-                    },
-                  )
-                else if (isCrossNode && item.type == ContextMenuButtonType.cut)
-                  ContextMenuButtonItem(
-                    label: item.label,
-                    type: ContextMenuButtonType.cut,
-                    onPressed: () {
-                      state.hideToolbar();
-                      widget.controller.cutSelection();
-                    },
-                  )
-                else if (isCrossNode &&
-                    item.type == ContextMenuButtonType.paste)
-                  ContextMenuButtonItem(
-                    label: item.label,
-                    type: ContextMenuButtonType.paste,
-                    onPressed: () {
-                      state.hideToolbar();
-                      _pasteWithLinkDetection();
-                    },
-                  )
-                else
-                  item,
-            ],
-          );
-        },
+                  ),
+                // EditableText's own "Select All" button (from
+                // state.contextMenuButtonItems below) selects only within
+                // this one field's own text — there's no touch path to the
+                // document-wide controller.selectAll() otherwise (Cmd/Ctrl+A
+                // only fires from a hardware keyboard). Replace it so the one
+                // "Select All" button touch users actually have reaches the
+                // whole document, the way the drag handles expect.
+                for (final item in state.contextMenuButtonItems)
+                  if (item.type == ContextMenuButtonType.selectAll)
+                    ContextMenuButtonItem(
+                      label: item.label,
+                      type: ContextMenuButtonType.selectAll,
+                      onPressed: () {
+                        state.hideToolbar();
+                        widget.controller.selectAll();
+                        _showToolbarForWholeField(state);
+                      },
+                    )
+                  else if (isCrossNode &&
+                      item.type == ContextMenuButtonType.copy)
+                    ContextMenuButtonItem(
+                      label: item.label,
+                      type: ContextMenuButtonType.copy,
+                      onPressed: () {
+                        state.hideToolbar();
+                        widget.controller.copySelection();
+                      },
+                    )
+                  else if (isCrossNode &&
+                      item.type == ContextMenuButtonType.cut)
+                    ContextMenuButtonItem(
+                      label: item.label,
+                      type: ContextMenuButtonType.cut,
+                      onPressed: () {
+                        state.hideToolbar();
+                        widget.controller.cutSelection();
+                      },
+                    )
+                  else if (isCrossNode &&
+                      item.type == ContextMenuButtonType.paste)
+                    ContextMenuButtonItem(
+                      label: item.label,
+                      type: ContextMenuButtonType.paste,
+                      onPressed: () {
+                        state.hideToolbar();
+                        _pasteWithLinkDetection();
+                      },
+                    )
+                  else
+                    item,
+              ],
+            );
+          },
+        ),
       ),
     );
 
@@ -2188,15 +2313,14 @@ class _QuireEditorState extends State<QuireEditor> {
         },
         child: Text(
           label,
-          style:
-              (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
-                  .copyWith(
-                    fontSize:
-                        (theme.textTheme.bodyLarge?.fontSize ?? 16) *
-                        _containerContentScale,
-                    fontStyle: FontStyle.italic,
-                    color: theme.hintColor,
-                  ),
+          style: (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+              .copyWith(
+                fontSize:
+                    (theme.textTheme.bodyLarge?.fontSize ?? 16) *
+                    _containerContentScale,
+                fontStyle: FontStyle.italic,
+                color: theme.hintColor,
+              ),
         ),
       ),
     );
