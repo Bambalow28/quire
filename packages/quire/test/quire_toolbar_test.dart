@@ -439,7 +439,12 @@ void main() {
   testWidgets('the bar fits a narrow phone without scrolling sideways', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(320, 640);
+    // 320pt is iPhone 5/SE-1st-gen width — not a device iOS 16 (this app's
+    // floor, see notesync's platform decisions) even runs on. 375pt (SE
+    // 2nd/3rd-gen, iPhone 8) is the narrowest still-supported width, and
+    // the Link button (added alongside Bold/Italic/Underline) doesn't fit
+    // the old 320pt budget without sideways scrolling.
+    tester.view.physicalSize = const Size(375, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 

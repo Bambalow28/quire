@@ -8,6 +8,7 @@ import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
 
+import 'link_dialog.dart';
 import 'node_text_controller.dart';
 import 'quire_editor_controller.dart';
 import 'table_grid.dart';
@@ -267,7 +268,7 @@ class _QuireEditorState extends State<QuireEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final nodes = widget.controller.document.nodes;
+    final nodes = _visibleNodes(widget.controller.document.nodes);
     final padding = widget.padding ?? const EdgeInsets.all(16);
     // A CustomScrollView with a trailing SliverFillRemaining (rather than a
     // plain ListView) so the empty space below the last node is real,
@@ -361,6 +362,58 @@ class _QuireEditorState extends State<QuireEditor> {
     return only is TextNode &&
         only.text.text.isEmpty &&
         only.blockType == 'paragraph';
+  }
+
+  /// Hides a collapsed toggle list's content from the rendered node list.
+  /// The document model is flat (see `TextNode.indent`) — "content" means
+  /// every node immediately following the toggle whose indent is greater
+  /// than the toggle's own, stopping at the first node that's back at or
+  /// above the toggle's indent (or a nested toggle inside a collapsed one,
+  /// which is skipped along with it and re-evaluated on its own once its
+  /// ancestor is expanded again).
+  List<DocumentNode> _visibleNodes(List<DocumentNode> nodes) {
+    final visible = <DocumentNode>[];
+    int? collapsedAtIndent;
+    for (final node in nodes) {
+      final indent = node is TextNode ? node.indent : 0;
+      if (collapsedAtIndent != null) {
+        if (indent > collapsedAtIndent) continue;
+        collapsedAtIndent = null;
+      }
+      visible.add(node);
+      if (node is TextNode && node.blockType == 'toggleList' && node.isCollapsed) {
+        collapsedAtIndent = indent;
+      }
+    }
+    return visible;
+  }
+
+  /// Pastes with a detour for URLs: a clipboard that's *just* a bare
+  /// `http(s)://...` string (not a URL sitting inside other text) offers
+  /// turning it into a link with editable display text before it lands,
+  /// rather than dropping the raw URL in as plain text. Every paste path
+  /// (keyboard shortcut, system context-menu Paste) routes through this
+  /// instead of calling `controller.pasteClipboard` directly.
+  Future<void> _pasteWithLinkDetection() async {
+    final data = await Clipboard.getData('text/plain');
+    final text = data?.text?.trim();
+    final uri = text == null ? null : Uri.tryParse(text);
+    final isBareUrl =
+        uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.toString() == text;
+    if (!isBareUrl) {
+      await widget.controller.pasteClipboard();
+      return;
+    }
+    if (!mounted) return;
+    final result = await showLinkDialog(context, initialUrl: text!);
+    if (!mounted) return;
+    if (result != null) {
+      widget.controller.insertLink(url: result.url, displayText: result.text);
+    } else {
+      await widget.controller.pasteClipboard();
+    }
   }
 
   /// Tapping the empty tail below the last node focuses that node (if it's
@@ -1537,9 +1590,9 @@ class _QuireEditorState extends State<QuireEditor> {
       const SingleActivator(LogicalKeyboardKey.keyX, control: true):
           widget.controller.cutSelection,
       const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
-          widget.controller.pasteClipboard,
+          _pasteWithLinkDetection,
       const SingleActivator(LogicalKeyboardKey.keyV, control: true):
-          widget.controller.pasteClipboard,
+          _pasteWithLinkDetection,
     };
 
     final docSelection = widget.controller.composer.selection;
@@ -1846,7 +1899,7 @@ class _QuireEditorState extends State<QuireEditor> {
                     type: ContextMenuButtonType.paste,
                     onPressed: () {
                       state.hideToolbar();
-                      widget.controller.pasteClipboard();
+                      _pasteWithLinkDetection();
                     },
                   )
                 else
@@ -2051,6 +2104,28 @@ class _QuireEditorState extends State<QuireEditor> {
                 ),
               ),
             ),
+          ),
+        ),
+      );
+    }
+    if (node.blockType == 'toggleList') {
+      // A plain IconButton (not ExcludeFocus + GestureDetector like the
+      // checkbox) is fine here — this row has no adjoining text field of
+      // its own to steal focus from mid-tap, unlike a checklist item's
+      // inline checkbox.
+      return Padding(
+        padding: const EdgeInsets.only(right: 2),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: IconButton(
+            padding: EdgeInsets.zero,
+            iconSize: 18,
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              node.isCollapsed ? Icons.chevron_right : Icons.expand_more,
+            ),
+            onPressed: () => widget.controller.toggleCollapsed(node.id),
           ),
         ),
       );

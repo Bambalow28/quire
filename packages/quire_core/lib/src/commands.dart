@@ -696,6 +696,26 @@ class _ToggleTaskCheckedCommand extends EditCommand {
   }
 }
 
+// --- ToggleCollapsedRequest --------------------------------------------
+
+class ToggleCollapsedRequest extends EditRequest {
+  ToggleCollapsedRequest(this.nodeId);
+  final String nodeId;
+}
+
+class _ToggleCollapsedCommand extends EditCommand {
+  _ToggleCollapsedCommand(this.request);
+  final ToggleCollapsedRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final node = context.document.getNodeById(request.nodeId);
+    if (node is! TextNode) return;
+    node.metadata = {...node.metadata, 'collapsed': !node.isCollapsed};
+    executor.emit(DocumentEdited([node.id]));
+  }
+}
+
 // --- Default handlers ------------------------------------------------
 
 final List<EditRequestHandler> defaultRequestHandlers = [
@@ -733,6 +753,9 @@ final List<EditRequestHandler> defaultRequestHandlers = [
       : null,
   (request) => request is ToggleTaskCheckedRequest
       ? _ToggleTaskCheckedCommand(request)
+      : null,
+  (request) => request is ToggleCollapsedRequest
+      ? _ToggleCollapsedCommand(request)
       : null,
   ...tableRequestHandlers,
 ];

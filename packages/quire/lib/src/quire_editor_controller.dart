@@ -89,6 +89,32 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   void toggleTaskChecked(String nodeId) =>
       history.execute([ToggleTaskCheckedRequest(nodeId)]);
 
+  void toggleCollapsed(String nodeId) =>
+      history.execute([ToggleCollapsedRequest(nodeId)]);
+
+  /// Inserts [displayText] carrying a `'link'` attribution pointing at
+  /// [url], replacing the current selection if there is one. The toolbar's
+  /// Link button and paste's URL-detection both route through this — it's
+  /// the one path that needs to force a specific attribution rather than
+  /// insert with whatever the composer is already composing in.
+  void insertLink({required String url, required String displayText}) {
+    if (displayText.isEmpty) return;
+    final selection = composer.selection;
+    if (selection == null) return;
+    if (!selection.isCollapsed) deleteSelection();
+
+    final position = composer.selection?.extent;
+    if (position == null) return;
+    if (position.nodePosition is! TextNodePosition) return;
+    history.execute([
+      InsertTextRequest(position, displayText, {
+        Attribution('link', value: {'url': url}),
+      }),
+    ]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
+  }
+
   /// Inserts an [ImageNode] right after the currently-focused node (or at
   /// the document end if nothing is focused).
   void insertImage(String url) {

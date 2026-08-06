@@ -1,7 +1,9 @@
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/material.dart';
 import 'package:quire_core/quire_core.dart';
 
 import 'insert_table_dialog.dart';
+import 'link_dialog.dart';
 import 'quire_editor_controller.dart';
 import 'table_settings_menu.dart';
 import 'text_size_menu.dart';
@@ -224,6 +226,30 @@ class _QuireToolbarState extends State<QuireToolbar>
                         isSelected: active.contains(_underlineAttribution),
                         onPressed: widget.controller.toggleUnderline,
                       ),
+                      _BarButton(
+                        tooltip: 'Link',
+                        icon: Icons.link,
+                        iconColor: Colors.grey,
+                        onPressed: () async {
+                          final selection = widget.controller.composer.selection;
+                          final selectedText = selection == null
+                              ? ''
+                              : flattenSelectionText(
+                                  widget.controller.document,
+                                  selection,
+                                );
+                          final result = await showLinkDialog(
+                            context,
+                            initialText: selectedText,
+                          );
+                          if (result != null) {
+                            widget.controller.insertLink(
+                              url: result.url,
+                              displayText: result.text,
+                            );
+                          }
+                        },
+                      ),
                       const Spacer(),
                       // Sits next to the keyboard button because the two
                       // trade places: one puts the options where the
@@ -325,6 +351,7 @@ class _OptionsPanel extends StatelessWidget {
               Icons.format_list_numbered,
             ),
             block('Checklist', 'listItemTask', Icons.checklist),
+            block('Toggle list', 'toggleList', Icons.arrow_drop_down_circle_outlined),
             _OptionRow(
               label: 'Decrease indent',
               icon: Icons.format_indent_decrease,
@@ -387,6 +414,20 @@ class _OptionsPanel extends StatelessWidget {
                   if (url != null) controller.insertImage(url);
                 },
               ),
+            _OptionRow(
+              label: 'Emoji',
+              icon: Icons.emoji_emotions_outlined,
+              onTap: () => showModalBottomSheet(
+                context: context,
+                builder: (_) => SizedBox(
+                  height: 320,
+                  child: EmojiPicker(
+                    onEmojiSelected: (category, emoji) =>
+                        controller.replaceSelectionWithText(emoji.emoji),
+                  ),
+                ),
+              ),
+            ),
             if (tableCell != null)
               _OptionRow(
                 label: 'Table settings',
@@ -503,6 +544,7 @@ class _BarButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.isSelected = false,
+    this.iconColor,
   });
 
   final String tooltip;
@@ -510,12 +552,16 @@ class _BarButton extends StatelessWidget {
   final VoidCallback? onPressed;
   final bool isSelected;
 
+  /// Overrides the normal selected/unselected theme color — the Link button
+  /// wants a fixed grey regardless of state, unlike Bold/Italic/Underline.
+  final Color? iconColor;
+
   @override
   Widget build(BuildContext context) => IconButton(
     tooltip: tooltip,
     isSelected: isSelected,
     visualDensity: VisualDensity.compact,
-    icon: Icon(icon),
+    icon: Icon(icon, color: iconColor),
     onPressed: onPressed,
   );
 }
