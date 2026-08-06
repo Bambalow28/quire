@@ -2256,14 +2256,20 @@ class _QuireEditorState extends State<QuireEditor> {
     if (node.blockType == 'toggleList') {
       // Centered on the real measured first line the same way the
       // checklist checkbox is (see [_scheduleChecklistBoxMeasurement]) —
-      // sized to the node's own font size, matching the bullet/number
-      // markers below rather than a fixed icon size.
+      // fixed at the checkbox's own mark size (18pt) so the two prefixes
+      // read as the same size next to each other, rather than scaling with
+      // the node's font size.
       final measured = _checklistBoxes[node.id];
       final topOffset = measured?.topOffset ?? 0.0;
       final height = measured?.height ?? _lineHeight(context, node);
-      final iconSize = _styleFor(Theme.of(context), node).fontSize ?? 16.0;
+      const iconSize = 18.0;
       return Padding(
-        padding: EdgeInsets.only(top: topOffset, right: 2),
+        // No right inset: the icon box is exactly 24px — one indent level
+        // — so the title's text starts flush with content text one level
+        // deeper (`addToggleContent` gives content `indent: toggle.indent
+        // + 1`). Any right padding here would push the title text further
+        // right than the content below it.
+        padding: EdgeInsets.only(top: topOffset),
         child: SizedBox(
           width: 24,
           height: math.max(height, iconSize),

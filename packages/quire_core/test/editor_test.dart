@@ -132,6 +132,71 @@ void main() {
     expect(second.blockType, 'paragraph');
   });
 
+  test(
+    'InsertNewlineRequest on an already-empty line inside a toggle exits the toggle instead of nesting deeper',
+    () {
+      final doc = MutableDocument(
+        nodes: [
+          _para('t', 'Toggle', metadata: {'blockType': 'toggleList'}),
+          _para('c', '', metadata: {'indent': 1}),
+        ],
+      );
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('c', const TextNodePosition(0)),
+        ),
+      );
+      final editor = _editor(doc, composer);
+
+      editor.execute([InsertNewlineRequest()]);
+
+      expect(doc.nodes.length, 2);
+      final content = doc.getNodeById('c') as TextNode;
+      expect(content.indent, 0);
+      expect(composer.selection!.extent.nodeId, 'c');
+    },
+  );
+
+  test(
+    'ChangeBlockTypeRequest adds a trailing paragraph when applied to the last line',
+    () {
+      final doc = MutableDocument(nodes: [_para('a', 'x')]);
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(1)),
+        ),
+      );
+      final editor = _editor(doc, composer);
+
+      editor.execute([ChangeBlockTypeRequest('toggleList')]);
+
+      expect(doc.nodes.length, 2);
+      expect((doc.getNodeById('a') as TextNode).blockType, 'toggleList');
+      final second = doc.getNodeAt(1) as TextNode;
+      expect(second.text.text, '');
+      expect(second.blockType, 'paragraph');
+    },
+  );
+
+  test(
+    'ChangeBlockTypeRequest does not add a trailing paragraph when one already follows',
+    () {
+      final doc = MutableDocument(
+        nodes: [_para('a', 'x'), _para('b', 'already here')],
+      );
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(1)),
+        ),
+      );
+      final editor = _editor(doc, composer);
+
+      editor.execute([ChangeBlockTypeRequest('toggleList')]);
+
+      expect(doc.nodes.length, 2);
+    },
+  );
+
   test('ToggleAttributionRequest over an expanded multi-node selection', () {
     const bold = Attribution('bold');
     final doc = MutableDocument(

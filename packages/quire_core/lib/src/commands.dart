@@ -1,4 +1,5 @@
 import 'attributed_text.dart';
+import 'document.dart';
 import 'editor.dart';
 import 'node_ids.dart';
 import 'nodes.dart';
@@ -268,6 +269,27 @@ const _headingBlockTypes = {
   'header6',
 };
 
+/// Whether [node] is nested — directly or transitively — under a
+/// `toggleList` ancestor. Walks the flat node list backward to the nearest
+/// preceding node at a shallower indent (`node`'s "parent"); if that parent
+/// is a toggle, `node` is its content, otherwise the walk continues from
+/// the parent's own indent.
+bool _isInsideToggle(MutableDocument document, TextNode node) {
+  if (node.indent == 0) return false;
+  final nodes = document.nodesInDocumentOrder.toList();
+  final index = nodes.indexWhere((n) => n.id == node.id);
+  if (index == -1) return false;
+  var currentIndent = node.indent;
+  for (var i = index - 1; i >= 0; i--) {
+    final candidate = nodes[i];
+    if (candidate is! TextNode || candidate.indent >= currentIndent) continue;
+    if (candidate.blockType == 'toggleList') return true;
+    if (candidate.indent == 0) return false;
+    currentIndent = candidate.indent;
+  }
+  return false;
+}
+
 class _InsertNewlineCommand extends EditCommand {
   @override
   void execute(EditContext context, CommandExecutor executor) {
@@ -279,6 +301,19 @@ class _InsertNewlineCommand extends EditCommand {
     if (node == null) return;
 
     if (node is TextNode) {
+      if (node.text.text.isEmpty &&
+          node.indent > 0 &&
+          _isInsideToggle(document, node)) {
+        // Enter on an already-empty line inside a toggle's content steps
+        // the line out to the toggle's own indent instead of nesting yet
+        // another empty line — mirrors the outliner "second Enter exits
+        // the list" convention.
+        node.metadata['indent'] = node.indent - 1;
+        executor.emit(DocumentEdited([node.id]));
+        executor.emit(SelectionChanged());
+        return;
+      }
+
       final offset = (position.nodePosition as TextNodePosition).offset;
       final left = node.text.copyRange(0, offset);
       final right = node.text.copyRange(offset, node.text.text.length);
@@ -484,12 +519,35 @@ class _ChangeBlockTypeCommand extends EditCommand {
 
   @override
   void execute(EditContext context, CommandExecutor executor) {
+    final document = context.document;
     final changedIds = <String>[];
+    TextNode? lastNode;
     for (final node in _textNodesInSelection(context)) {
       node.metadata = _metadataForBlockType(node, request.blockType);
       changedIds.add(node.id);
+      lastNode = node;
     }
-    if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
+    if (changedIds.isEmpty) return;
+
+    // Picking a block (checklist, toggle, ...) from the plus menu converts
+    // the current line in place — if that line is also the last one in the
+    // document, there's nowhere left for the caret to go to keep writing
+    // outside the new block. Give it a line, same as InsertNodeRequest does
+    // for a non-text block. Reverting to 'paragraph' isn't a plus-menu pick,
+    // so it's excluded.
+    if (request.blockType != 'paragraph' &&
+        changedIds.length == 1 &&
+        lastNode != null &&
+        document.getNodeAfterInContainer(lastNode.id) == null) {
+      final paragraph = TextNode(
+        id: generateNodeId(),
+        text: AttributedText(''),
+      );
+      document.insertNodeAfter(lastNode.id, paragraph);
+      changedIds.add(paragraph.id);
+    }
+
+    executor.emit(DocumentEdited(changedIds));
   }
 }
 
