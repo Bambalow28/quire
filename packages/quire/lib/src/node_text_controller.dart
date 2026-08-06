@@ -126,6 +126,11 @@ class NodeTextController extends TextEditingController {
           return style.merge(TextStyle(fontFamily: family));
         }
         return style;
+      case 'largeEmoji':
+        // A fixed size, not a multiplier on the surrounding text: emoji
+        // picked from the panel should read as content-sized regardless of
+        // the line's own font size (headers, toggle content, etc).
+        return style.merge(const TextStyle(fontSize: 28));
       default:
         // Unknown attribution names are ignored, never thrown on.
         return style;

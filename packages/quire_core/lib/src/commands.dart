@@ -290,6 +290,26 @@ bool _isInsideToggle(MutableDocument document, TextNode node) {
   return false;
 }
 
+/// The id to insert a new sibling line after when exiting [toggle] — the
+/// last node of its (possibly hidden, if collapsed) content run, or
+/// [toggle] itself if it has none. Content lives immediately after the
+/// toggle in document order, so inserting right after the toggle instead
+/// would land the new line *ahead of* that content, which severs it from
+/// the toggle (see [_isInsideToggle]: the new line's shallower indent would
+/// become the nearest-ancestor match before the walk ever reaches the
+/// toggle).
+String _lastNodeIdInToggleContent(MutableDocument document, TextNode toggle) {
+  final nodes = document.nodesInDocumentOrder.toList();
+  final index = nodes.indexWhere((n) => n.id == toggle.id);
+  var anchor = toggle.id;
+  for (var i = index + 1; i < nodes.length; i++) {
+    final candidate = nodes[i];
+    if (candidate is! TextNode || candidate.indent <= toggle.indent) break;
+    anchor = candidate.id;
+  }
+  return anchor;
+}
+
 class _InsertNewlineCommand extends EditCommand {
   @override
   void execute(EditContext context, CommandExecutor executor) {
@@ -347,7 +367,10 @@ class _InsertNewlineCommand extends EditCommand {
         text: right,
         metadata: secondMetadata,
       );
-      document.insertNodeAfter(node.id, newNode);
+      final insertAfterId = (node.blockType == 'toggleList' && node.isCollapsed)
+          ? _lastNodeIdInToggleContent(document, node)
+          : node.id;
+      document.insertNodeAfter(insertAfterId, newNode);
       context.composer.selection = DocumentSelection.collapsed(
         DocumentPosition(newNode.id, const TextNodePosition(0)),
       );

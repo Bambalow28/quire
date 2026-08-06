@@ -56,6 +56,12 @@ class _QuireToolbarState extends State<QuireToolbar>
     with WidgetsBindingObserver {
   bool _panelOpen = false;
 
+  /// Whether the panel's slot is currently showing the emoji picker instead
+  /// of the options list — swapped in place the same way the panel itself
+  /// swaps in place of the keyboard, so picking "Emoji" doesn't pop a modal
+  /// sheet on top of everything.
+  bool _showEmojiPicker = false;
+
   /// Last keyboard height seen. Remembered because the panel is only ever
   /// shown *with the keyboard down*, when the live inset reads zero.
   double _keyboardHeight = 0;
@@ -111,6 +117,7 @@ class _QuireToolbarState extends State<QuireToolbar>
         setState(() {
           _panelOpen = false;
           _closingPanel = false;
+          _showEmojiPicker = false;
         });
         return;
       }
@@ -177,6 +184,7 @@ class _QuireToolbarState extends State<QuireToolbar>
     if (_panelOpen && !_keyboardLeaving && panelHeight == 0) {
       _panelOpen = false;
       _closingPanel = false;
+      _showEmojiPicker = false;
     }
     final showingOptions = _panelOpen && !_closingPanel;
 
@@ -288,10 +296,22 @@ class _QuireToolbarState extends State<QuireToolbar>
             if (_panelOpen)
               SizedBox(
                 height: panelHeight,
-                child: _OptionsPanel(
-                  controller: widget.controller,
-                  onPickImage: widget.onPickImage,
-                ),
+                child: _showEmojiPicker
+                    ? _EmojiPanel(
+                        controller: widget.controller,
+                        // Mirrors the panel's own "X" — the picker is a view
+                        // inside the same slot, not a separate sheet, so
+                        // closing it means closing the whole panel and
+                        // handing focus (and the keyboard) back, not
+                        // stepping back to the options list.
+                        onClose: _togglePanel,
+                      )
+                    : _OptionsPanel(
+                        controller: widget.controller,
+                        onPickImage: widget.onPickImage,
+                        onShowEmoji: () =>
+                            setState(() => _showEmojiPicker = true),
+                      ),
               ),
           ],
         );
@@ -304,6 +324,11 @@ class _QuireToolbarState extends State<QuireToolbar>
 /// onto the host app's [ColorScheme] so it reads as part of the editor
 /// (light or dark) instead of a foreign light popup dropped on top of it.
 Config _emojiPickerConfig(ColorScheme scheme) => Config(
+  // Null, not the package's own fixed default (256): the picker now lives
+  // inside an [Expanded] in [_EmojiPanel], so its own ancestor already
+  // bounds its height — a second, independent fixed height here just fights
+  // that instead of filling it.
+  height: null,
   emojiViewConfig: EmojiViewConfig(backgroundColor: scheme.surface),
   categoryViewConfig: CategoryViewConfig(
     backgroundColor: scheme.surface,
@@ -316,7 +341,14 @@ Config _emojiPickerConfig(ColorScheme scheme) => Config(
   bottomActionBarConfig: BottomActionBarConfig(
     backgroundColor: scheme.surface,
     buttonColor: scheme.primary,
-    buttonIconColor: scheme.onPrimary,
+    buttonIconColor: Colors.white,
+    // The package's own search/backspace buttons are a 48px IconButton
+    // (Material's minimum tap target) inside a 40px CircleAvatar — the
+    // button always clips against its own circle. Building the row
+    // ourselves with a circular *button style* instead of a separate
+    // undersized avatar sidesteps that entirely.
+    customBottomActionBar: (config, state, showSearchView) =>
+        _EmojiActionBar(scheme: scheme, state: state, onSearch: showSearchView),
   ),
   searchViewConfig: SearchViewConfig(
     backgroundColor: scheme.surfaceContainerHighest,
@@ -328,13 +360,64 @@ Config _emojiPickerConfig(ColorScheme scheme) => Config(
   ),
 );
 
+/// Replaces the emoji picker's own search/backspace row — see the
+/// `customBottomActionBar` comment above for why.
+class _EmojiActionBar extends StatelessWidget {
+  const _EmojiActionBar({
+    required this.scheme,
+    required this.state,
+    required this.onSearch,
+  });
+
+  final ColorScheme scheme;
+  final EmojiViewState state;
+  final VoidCallback onSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    final buttonStyle = IconButton.styleFrom(
+      backgroundColor: scheme.primary,
+      // Default black glyph reads as too dark against the filled button —
+      // white matches the rest of the picker's on-primary text.
+      foregroundColor: Colors.white,
+      shape: const CircleBorder(),
+    );
+    return Container(
+      color: scheme.surface,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          IconButton(
+            tooltip: 'Search emoji',
+            style: buttonStyle,
+            icon: const Icon(Icons.search),
+            onPressed: onSearch,
+          ),
+          IconButton(
+            tooltip: 'Backspace',
+            style: buttonStyle,
+            icon: const Icon(Icons.backspace),
+            onPressed: state.onBackspacePressed,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Every action the bar itself no longer has room for, one labelled row each,
 /// scrolling vertically inside the keyboard-sized slot.
 class _OptionsPanel extends StatelessWidget {
-  const _OptionsPanel({required this.controller, this.onPickImage});
+  const _OptionsPanel({
+    required this.controller,
+    this.onPickImage,
+    required this.onShowEmoji,
+  });
 
   final QuireEditorController controller;
   final Future<String?> Function()? onPickImage;
+  final VoidCallback onShowEmoji;
 
   @override
   Widget build(BuildContext context) {
@@ -445,24 +528,7 @@ class _OptionsPanel extends StatelessWidget {
             _OptionRow(
               label: 'Emoji',
               icon: Icons.emoji_emotions_outlined,
-              onTap: () => showModalBottomSheet(
-                context: context,
-                builder: (_) => SizedBox(
-                  height: 320,
-                  child: EmojiPicker(
-                    config: _emojiPickerConfig(scheme),
-                    // Picking an emoji shouldn't bring the keyboard back up
-                    // over this sheet — leave the field unfocused so the
-                    // picker stays open for more picks, the same way the
-                    // "+" options panel itself stays open until dismissed.
-                    onEmojiSelected: (category, emoji) =>
-                        controller.replaceSelectionWithText(
-                          emoji.emoji,
-                          requestFocusAfter: false,
-                        ),
-                  ),
-                ),
-              ),
+              onTap: onShowEmoji,
             ),
             if (tableCell != null)
               _OptionRow(
@@ -487,6 +553,60 @@ class _OptionsPanel extends StatelessWidget {
               label: 'Redo',
               icon: Icons.redo,
               onTap: controller.canRedo ? controller.redo : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The emoji picker, swapped into the panel's own slot — sized to fill it
+/// (via [Expanded], not the package's own fixed default height) with a
+/// small header bar carrying the close button, so it reads as one more view
+/// inside the panel rather than a separate sheet layered on top of it.
+class _EmojiPanel extends StatelessWidget {
+  const _EmojiPanel({required this.controller, required this.onClose});
+
+  final QuireEditorController controller;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+      child: Material(
+        color: scheme.surface,
+        elevation: 3,
+        borderRadius: BorderRadius.circular(16),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(left: 12),
+                  child: Text('Emoji'),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Close emoji picker',
+                  icon: const Icon(Icons.close),
+                  onPressed: onClose,
+                ),
+              ],
+            ),
+            Expanded(
+              child: EmojiPicker(
+                config: _emojiPickerConfig(scheme),
+                // Picking an emoji shouldn't bring the keyboard back up —
+                // leave the field unfocused so the picker stays open for
+                // more picks, mirroring how the options panel itself stays
+                // open until its own close button is pressed.
+                onEmojiSelected: (category, emoji) =>
+                    controller.insertEmoji(emoji.emoji),
+              ),
             ),
           ],
         ),

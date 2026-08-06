@@ -140,6 +140,26 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     if (id != null) requestFocus(id);
   }
 
+  /// Inserts [emoji] at the caret carrying a `'largeEmoji'` attribution, so
+  /// it renders bigger than the surrounding text (see
+  /// `NodeTextController._applyAttribution`) — a picked emoji reads as
+  /// content, not a tiny glyph lost in the line. Doesn't request focus back:
+  /// the emoji panel stays open (inline, not a modal) for further picks, the
+  /// same reasoning as [replaceSelectionWithText]'s `requestFocusAfter`.
+  void insertEmoji(String emoji) {
+    if (emoji.isEmpty) return;
+    final selection = composer.selection;
+    if (selection == null) return;
+    if (!selection.isCollapsed) deleteSelection();
+
+    final position = composer.selection?.extent;
+    if (position == null) return;
+    if (position.nodePosition is! TextNodePosition) return;
+    history.execute([
+      InsertTextRequest(position, emoji, {const Attribution('largeEmoji')}),
+    ]);
+  }
+
   /// Inserts an [ImageNode] right after the currently-focused node (or at
   /// the document end if nothing is focused).
   void insertImage(String url) {

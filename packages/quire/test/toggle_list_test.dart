@@ -200,6 +200,45 @@ void main() {
     },
   );
 
+  test(
+    'pressing Enter on a collapsed toggle with content lands the new line after that content, not before it',
+    () {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'toggle',
+              text: AttributedText('Section'),
+              metadata: const {'blockType': 'toggleList', 'collapsed': true},
+            ),
+            TextNode(
+              id: 'content',
+              text: AttributedText('Hidden content'),
+              metadata: const {'indent': 1},
+            ),
+          ],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('toggle', const TextNodePosition(7)),
+        ),
+      );
+
+      controller.insertNewline();
+
+      final nodes = controller.document.nodesInDocumentOrder.toList();
+      expect(nodes, hasLength(3));
+      expect(nodes[0].id, 'toggle');
+      // The hidden content stays right after the toggle, not shoved behind
+      // the newly-inserted sibling line.
+      expect(nodes[1].id, 'content');
+      final sibling = nodes[2] as TextNode;
+      expect(sibling.blockType, 'paragraph');
+      expect(sibling.indent, 0);
+    },
+  );
+
   testWidgets(
     'an empty expanded toggle shows an "Empty toggle" hint; tapping it starts content',
     (tester) async {
