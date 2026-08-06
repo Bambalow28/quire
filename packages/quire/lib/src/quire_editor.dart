@@ -625,26 +625,40 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
-  /// The URL of the `'link'` attribution covering [position], or `null` if
-  /// it isn't on a link — checked on every tap-up so tapping a link opens it
-  /// instead of just moving the caret there.
-  String? _linkUrlAt(DocumentPosition position) {
-    final node = widget.controller.document.getNodeById(position.nodeId);
-    if (node is! TextNode) return null;
-    final nodePosition = position.nodePosition;
-    if (nodePosition is! TextNodePosition) return null;
-    final offset = nodePosition.offset;
-    // attributionsAt is exclusive of the end offset, same as
-    // AttributionSpan's own [start, end) convention (see attributed_text.dart)
-    // — a tap right at a link's trailing edge falls just outside it, checked
-    // one offset earlier instead so the last character still counts.
-    for (final check in {offset, offset - 1}) {
-      if (check < 0 || check >= node.text.text.length) continue;
-      final link = node.text
-          .attributionsAt(check)
-          .where((a) => a.name == 'link')
-          .firstOrNull;
-      if (link != null) return link.value['url'] as String?;
+  /// The URL of the `'link'` attribution actually painted under
+  /// [globalPosition], or `null` if the tap didn't land on one — checked on
+  /// every tap-up so tapping a link opens it instead of just moving the
+  /// caret there.
+  ///
+  /// Deliberately not built on [_positionAt]: that resolves to the
+  /// *nearest* character for any tap inside a node's full-width row (so a
+  /// tap in the blank space to the right of a short line still "resolves"
+  /// to its last character), which would make a link clickable across its
+  /// entire row instead of just the linked glyphs. This hit-tests the
+  /// link's own real glyph boxes instead, so only they are clickable.
+  String? _linkUrlAtGlobalPosition(Offset globalPosition) {
+    for (final node in widget.controller.document.nodesInDocumentOrder) {
+      if (node is! TextNode) continue;
+      final renderEditable = _laidOutEditable(node.id);
+      if (renderEditable == null) continue;
+      final origin = renderEditable.localToGlobal(Offset.zero);
+      final rect = origin & renderEditable.size;
+      if (!rect.contains(globalPosition)) continue;
+      final localPosition = globalPosition - origin;
+      for (final span in node.text.spans) {
+        if (span.attribution.name != 'link') continue;
+        final boxes = renderEditable.getBoxesForSelection(
+          TextSelection(baseOffset: span.start, extentOffset: span.end),
+        );
+        for (final box in boxes) {
+          if (box.toRect().contains(localPosition)) {
+            return span.attribution.value['url'] as String?;
+          }
+        }
+      }
+      // The tap landed inside this node's row but not on any link glyph —
+      // no other node's row can also contain the same global point.
+      return null;
     }
     return null;
   }
@@ -728,7 +742,7 @@ class _QuireEditorState extends State<QuireEditor> {
       // Long-press covers word selection on touch; revisit with the
       // editor-level DeltaTextInputClient rewrite.
       final position = _positionAt(event.position);
-      final linkUrl = position == null ? null : _linkUrlAt(position);
+      final linkUrl = _linkUrlAtGlobalPosition(event.position);
       if (linkUrl != null) {
         // Skips this listener's own caret placement below — EditableText's
         // own internal tap handling still focuses/places its caret alongside
@@ -1773,10 +1787,10 @@ class _QuireEditorState extends State<QuireEditor> {
 
   /// Reads [node]'s field's real first-line box off its `RenderEditable`
   /// after this frame paints, and rebuilds if it moved [_prefixFor]'s
-  /// checkbox. Scheduled from every build of a `listItemTask` node (see
-  /// [_buildTextNode]) — cheap: skipped entirely once the cached value
-  /// stops changing, which is every frame after the first for a document
-  /// that isn't actively resizing/retyping.
+  /// checkbox/chevron. Scheduled from every build of a `listItemTask` or
+  /// `toggleList` node (see [_buildTextNode]) — cheap: skipped entirely
+  /// once the cached value stops changing, which is every frame after the
+  /// first for a document that isn't actively resizing/retyping.
   void _scheduleChecklistBoxMeasurement(String nodeId) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1809,7 +1823,7 @@ class _QuireEditorState extends State<QuireEditor> {
     final controller = _controllers[node.id]!;
     final focusNode = _focusNodes[node.id]!;
     final editableKey = _editableKeys[node.id]!;
-    if (node.blockType == 'listItemTask') {
+    if (node.blockType == 'listItemTask' || node.blockType == 'toggleList') {
       _scheduleChecklistBoxMeasurement(node.id);
     }
     final theme = Theme.of(context);
@@ -2145,18 +2159,26 @@ class _QuireEditorState extends State<QuireEditor> {
       );
     }
     if (node.blockType == 'toggleList') {
-      // A plain IconButton (not ExcludeFocus + GestureDetector like the
-      // checkbox) is fine here — this row has no adjoining text field of
-      // its own to steal focus from mid-tap, unlike a checklist item's
-      // inline checkbox.
+      // Centered on the real measured first line the same way the
+      // checklist checkbox is (see [_scheduleChecklistBoxMeasurement]) —
+      // sized to the node's own font size, matching the bullet/number
+      // markers below rather than a fixed icon size.
+      final measured = _checklistBoxes[node.id];
+      final topOffset = measured?.topOffset ?? 0.0;
+      final height = measured?.height ?? _lineHeight(context, node);
+      final iconSize = _styleFor(Theme.of(context), node).fontSize ?? 16.0;
       return Padding(
-        padding: const EdgeInsets.only(right: 2),
+        padding: EdgeInsets.only(top: topOffset, right: 2),
         child: SizedBox(
           width: 24,
-          height: 24,
+          height: math.max(height, iconSize),
+          // A plain IconButton (not ExcludeFocus + GestureDetector like the
+          // checkbox) is fine here — this row has no adjoining text field of
+          // its own to steal focus from mid-tap, unlike a checklist item's
+          // inline checkbox.
           child: IconButton(
             padding: EdgeInsets.zero,
-            iconSize: 18,
+            iconSize: iconSize,
             visualDensity: VisualDensity.compact,
             icon: Icon(
               node.isCollapsed ? Icons.chevron_right : Icons.expand_more,

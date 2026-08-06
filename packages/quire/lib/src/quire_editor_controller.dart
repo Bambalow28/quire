@@ -606,6 +606,28 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     final node = document.getNodeById(nodeId);
     if (end > start) {
       if (node is TextNode) attributions = node.text.attributionsAt(start);
+      // A link is atomic: editing any part of it (not just the characters
+      // actually removed) invalidates the whole thing, converting the rest
+      // back to plain text — otherwise deleting one character out of a link
+      // would leave the remaining, now-inaccurate text still styled and
+      // clickable as a link. Stripped in the range's *original* coordinates,
+      // before the delete below shifts anything.
+      if (node is TextNode) {
+        final overlappingLinks = node.text.spans.where(
+          (s) => s.attribution.name == 'link' && s.start < end && s.end > start,
+        );
+        for (final span in overlappingLinks) {
+          requests.add(
+            RemoveAttributionInRangeRequest(
+              nodeId,
+              span.attribution,
+              span.start,
+              span.end,
+            ),
+          );
+          attributions = attributions?.where((a) => a.name != 'link').toSet();
+        }
+      }
       requests.add(
         ChangeSelectionRequest(
           DocumentSelection(

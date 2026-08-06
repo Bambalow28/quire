@@ -291,6 +291,17 @@ class _InsertNewlineCommand extends EditCommand {
       if (node.blockType == 'listItemTask') {
         secondMetadata['checked'] = false;
       }
+      if (node.blockType == 'toggleList') {
+        // Enter on a toggle's own title line writes *into* it, not another
+        // toggle heading below it — the rest of the title (and everything
+        // typed after) becomes the toggle's first line of content, nested
+        // one indent deeper (indent is what marks content as "inside" a
+        // toggle for collapse/expand — see quire_editor.dart's
+        // `_visibleNodes`).
+        secondMetadata['blockType'] = 'paragraph';
+        secondMetadata['indent'] = node.indent + 1;
+        secondMetadata.remove('collapsed');
+      }
       final newNode = TextNode(
         id: generateNodeId(),
         text: right,
@@ -696,6 +707,42 @@ class _ToggleTaskCheckedCommand extends EditCommand {
   }
 }
 
+// --- RemoveAttributionInRangeRequest -------------------------------------
+
+/// Strips [attribution] from `[start, end)` of [nodeId]'s text outright —
+/// unlike [ToggleAttributionRequest], this doesn't read the current
+/// selection or toggle based on it; the caller already knows exactly which
+/// range to clear (e.g. a link about to be edited, invalidating it).
+class RemoveAttributionInRangeRequest extends EditRequest {
+  RemoveAttributionInRangeRequest(
+    this.nodeId,
+    this.attribution,
+    this.start,
+    this.end,
+  );
+  final String nodeId;
+  final Attribution attribution;
+  final int start;
+  final int end;
+}
+
+class _RemoveAttributionInRangeCommand extends EditCommand {
+  _RemoveAttributionInRangeCommand(this.request);
+  final RemoveAttributionInRangeRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final node = context.document.getNodeById(request.nodeId);
+    if (node is! TextNode) return;
+    node.text = node.text.removeAttribution(
+      request.attribution,
+      request.start,
+      request.end,
+    );
+    executor.emit(DocumentEdited([node.id]));
+  }
+}
+
 // --- ToggleCollapsedRequest --------------------------------------------
 
 class ToggleCollapsedRequest extends EditRequest {
@@ -756,6 +803,9 @@ final List<EditRequestHandler> defaultRequestHandlers = [
       : null,
   (request) => request is ToggleCollapsedRequest
       ? _ToggleCollapsedCommand(request)
+      : null,
+  (request) => request is RemoveAttributionInRangeRequest
+      ? _RemoveAttributionInRangeCommand(request)
       : null,
   ...tableRequestHandlers,
 ];

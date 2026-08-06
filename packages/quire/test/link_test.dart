@@ -163,9 +163,143 @@ void main() {
       MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
     );
 
-    await tester.tap(find.byType(EditableText).first);
+    // Tap on the actual glyphs, not the field's center — the field spans
+    // the full row width, and only the linked text itself should be
+    // clickable (see _linkUrlAtGlobalPosition's doc comment).
+    await tester.tapAt(tester.getTopLeft(find.byType(EditableText).first) + const Offset(5, 5));
     await tester.pumpAndSettle();
 
     expect(launched, ['https://example.com']);
+  });
+
+  testWidgets('tapping blank space past a linked line does not open it', (
+    tester,
+  ) async {
+    final launched = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('plugins.flutter.io/url_launcher'),
+          (call) async {
+            if (call.method == 'launch' || call.method == 'launchUrl') {
+              launched.add((call.arguments as Map)['url'] as String);
+              return true;
+            }
+            if (call.method == 'canLaunch') return true;
+            return null;
+          },
+        );
+
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('hi', [
+              AttributionSpan(
+                const Attribution('link', value: {'url': 'https://example.com'}),
+                0,
+                2,
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(width: 300, child: QuireEditor(controller: controller)),
+        ),
+      ),
+    );
+
+    // Far to the right of "hi", still well within the field's full-width row.
+    final topLeft = tester.getTopLeft(find.byType(EditableText).first);
+    await tester.tapAt(topLeft + const Offset(200, 5));
+    await tester.pumpAndSettle();
+
+    expect(launched, isEmpty);
+  });
+
+  test('deleting a character from a link strips the attribution from the rest of it', () {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('a link here', [
+              AttributionSpan(
+                const Attribution('link', value: {'url': 'https://example.com'}),
+                0,
+                6,
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+
+    // Backspace the last character of "a link" (offset 6 -> 5).
+    controller.replaceText(nodeId: 'a', start: 5, end: 6, insertedText: '');
+
+    final node = controller.document.getNodeById('a')! as TextNode;
+    expect(node.text.text, 'a lin here');
+    expect(node.text.spans, isEmpty);
+  });
+
+  test('deleting from the middle of a link strips it entirely, not just the deleted part', () {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('a link', [
+              AttributionSpan(
+                const Attribution('link', value: {'url': 'https://example.com'}),
+                0,
+                6,
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+
+    // Delete "lin" out of the middle, leaving "a k" — both surviving
+    // fragments must lose the link, not just the removed middle.
+    controller.replaceText(nodeId: 'a', start: 2, end: 5, insertedText: '');
+
+    final node = controller.document.getNodeById('a')! as TextNode;
+    expect(node.text.text, 'a k');
+    expect(node.text.spans, isEmpty);
+  });
+
+  test('editing outside a link leaves it intact', () {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'a',
+            text: AttributedText('a link here', [
+              AttributionSpan(
+                const Attribution('link', value: {'url': 'https://example.com'}),
+                0,
+                6,
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+
+    // Delete a character from " here", after the link — untouched.
+    controller.replaceText(nodeId: 'a', start: 10, end: 11, insertedText: '');
+
+    final node = controller.document.getNodeById('a')! as TextNode;
+    expect(node.text.text, 'a link her');
+    expect(
+      node.text.spans.any((s) => s.attribution.name == 'link'),
+      isTrue,
+    );
   });
 }
