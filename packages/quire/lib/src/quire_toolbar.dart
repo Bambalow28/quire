@@ -112,23 +112,33 @@ class _QuireToolbarState extends State<QuireToolbar>
 
   void _togglePanel() {
     if (_panelOpen) {
-      // Don't drop the panel here: asking for focus starts the keyboard
-      // rising, and the sizing in [build] shrinks the panel by exactly as
-      // much on the way, closing it when it reaches nothing. Same handoff as
-      // the open, run backwards.
       final id = widget.controller.focusedNodeId;
       final previousFocus = _previousFocus;
-      if (id == null && previousFocus?.context == null) {
-        // Nothing to hand off to (the panel opened with no node focused, or
-        // that field is gone now) — there's no keyboard coming to shrink it,
-        // so just close.
+      final hasFocusTarget = id != null || previousFocus?.context != null;
+      // On desktop there's no software keyboard to rise back up and shrink
+      // the panel — insets never move off 0, so the animated close below
+      // would wait forever and the panel would stay stuck open (see
+      // _hasSoftwareKeyboard). Just close it outright there; a real target
+      // still gets focus back, same as the animated path would give it.
+      if (!hasFocusTarget || !_hasSoftwareKeyboard) {
         setState(() {
           _panelOpen = false;
           _closingPanel = false;
           _showEmojiPicker = false;
         });
+        if (hasFocusTarget) {
+          if (id != null) {
+            widget.controller.requestFocus(id);
+          } else {
+            previousFocus!.requestFocus();
+          }
+        }
         return;
       }
+      // Don't drop the panel here: asking for focus starts the keyboard
+      // rising, and the sizing in [build] shrinks the panel by exactly as
+      // much on the way, closing it when it reaches nothing. Same handoff as
+      // the open, run backwards.
       setState(() {
         _keyboardLeaving = false;
         _closingPanel = true;

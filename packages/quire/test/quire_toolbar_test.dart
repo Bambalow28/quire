@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
@@ -607,5 +608,59 @@ void main() {
     await tester.pump();
     expect(find.byIcon(Icons.add), findsOneWidget);
     expect(find.text('Bullet list'), findsOneWidget);
+  });
+
+  testWidgets('on desktop, closing the panel closes it immediately instead of '
+      'waiting on a software keyboard that will never rise', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('hello'))],
+      ),
+    );
+    controller.focusNode('a');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: QuireToolbar(controller: controller)),
+      ),
+    );
+
+    // No software keyboard here, so viewInsets never moves off zero —
+    // exactly the desktop condition.
+    await tester.tap(find.byIcon(Icons.add));
+    await tester.pump();
+    expect(find.byIcon(Icons.close), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.close));
+    // A single pump, same as the mobile test above — before the fix this
+    // would leave the panel's options list still on screen forever, since
+    // nothing ever moves viewInsets to shrink it closed.
+    await tester.pump();
+    expect(find.byIcon(Icons.add), findsOneWidget);
+    expect(find.text('Bullet list'), findsNothing);
+
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('the "Hide keyboard" button is absent on desktop', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('hello'))],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: QuireToolbar(controller: controller)),
+      ),
+    );
+
+    expect(find.byIcon(Icons.keyboard_hide), findsNothing);
+
+    debugDefaultTargetPlatformOverride = null;
   });
 }
