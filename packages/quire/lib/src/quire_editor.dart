@@ -2216,12 +2216,25 @@ class _QuireEditorState extends State<QuireEditor> {
         // indent (used to detect "this is callout content") goes deeper.
         final hasContent = _containerHasContent(node);
         return Padding(
-          padding: EdgeInsets.only(left: indentPadding, bottom: 4),
+          padding: EdgeInsets.only(
+            left: indentPadding,
+            bottom: hasContent ? 0 : 4,
+          ),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: Colors.transparent,
-              border: Border.all(color: theme.dividerColor),
+              // No bottom side when content follows — that edge belongs to
+              // the content piece below, which draws its own top-less
+              // border. A full Border.all here would draw a visible line
+              // right where the two pieces meet.
+              border: hasContent
+                  ? Border(
+                      top: BorderSide(color: theme.dividerColor),
+                      left: BorderSide(color: theme.dividerColor),
+                      right: BorderSide(color: theme.dividerColor),
+                    )
+                  : Border.all(color: theme.dividerColor),
               borderRadius: hasContent
                   ? const BorderRadius.vertical(top: Radius.circular(8))
                   : BorderRadius.circular(8),

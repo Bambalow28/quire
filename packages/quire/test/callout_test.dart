@@ -162,6 +162,14 @@ void main() {
     // One piece for the title, one for the content line — stitched
     // together by matching border sides (see quire_editor.dart).
     expect(decorated.length, 2);
+
+    // The seam between the two pieces must be a single shared line, not a
+    // double line (a stray bottom border on the title reads as a divider
+    // sitting inside the box, not the box's own edge).
+    final titleBorder = (decorated[0].decoration as BoxDecoration).border!;
+    final contentBorder = (decorated[1].decoration as BoxDecoration).border!;
+    expect(titleBorder.bottom.style, BorderStyle.none);
+    expect(contentBorder.top.style, BorderStyle.none);
   });
 
   test(
