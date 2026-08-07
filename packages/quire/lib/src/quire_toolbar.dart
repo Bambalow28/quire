@@ -1,4 +1,5 @@
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:quire_core/quire_core.dart';
 
@@ -7,6 +8,13 @@ import 'link_dialog.dart';
 import 'quire_editor_controller.dart';
 import 'table_settings_menu.dart';
 import 'text_size_menu.dart';
+
+/// Desktop has no software keyboard to hide — `defaultTargetPlatform` rather
+/// than `dart:io`'s `Platform` so this stays safe to evaluate on web too.
+bool get _hasSoftwareKeyboard =>
+    defaultTargetPlatform == TargetPlatform.iOS ||
+    defaultTargetPlatform == TargetPlatform.android ||
+    defaultTargetPlatform == TargetPlatform.fuchsia;
 
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
@@ -239,7 +247,8 @@ class _QuireToolbarState extends State<QuireToolbar>
                         icon: Icons.link,
                         iconColor: Colors.blue,
                         onPressed: () async {
-                          final selection = widget.controller.composer.selection;
+                          final selection =
+                              widget.controller.composer.selection;
                           final selectedText = selection == null
                               ? ''
                               : flattenSelectionText(
@@ -273,21 +282,24 @@ class _QuireToolbarState extends State<QuireToolbar>
                       // of the editor's own nodes — a host title field, say)
                       // without touching the composer's selection, so
                       // tapping back in returns the caret to where it was.
-                      _BarButton(
-                        tooltip: 'Hide keyboard',
-                        icon: Icons.keyboard_hide,
-                        onPressed: () {
-                          // Everything goes at once here — there's nothing
-                          // for the panel to hand off to.
-                          if (_panelOpen) {
-                            setState(() {
-                              _panelOpen = false;
-                              _closingPanel = false;
-                            });
-                          }
-                          FocusManager.instance.primaryFocus?.unfocus();
-                        },
-                      ),
+                      // Desktop has no software keyboard to hide, so the
+                      // button itself has nothing to do there.
+                      if (_hasSoftwareKeyboard)
+                        _BarButton(
+                          tooltip: 'Hide keyboard',
+                          icon: Icons.keyboard_hide,
+                          onPressed: () {
+                            // Everything goes at once here — there's nothing
+                            // for the panel to hand off to.
+                            if (_panelOpen) {
+                              setState(() {
+                                _panelOpen = false;
+                                _closingPanel = false;
+                              });
+                            }
+                            FocusManager.instance.primaryFocus?.unfocus();
+                          },
+                        ),
                     ],
                   ),
                 ),
@@ -477,8 +489,7 @@ class _OptionsPanel extends StatelessWidget {
             _AlignmentRow(controller: controller),
             Builder(
               builder: (context) {
-                final spacing =
-                    controller.focusedTextNode?.lineSpacing ?? 1.15;
+                final spacing = controller.focusedTextNode?.lineSpacing ?? 1.15;
                 final index = _lineSpacingSteps.indexOf(spacing);
                 // Not one of the fixed steps (e.g. loaded from other
                 // content) — treat as between steps rather than crashing on
