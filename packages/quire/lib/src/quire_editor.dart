@@ -1678,14 +1678,47 @@ class _QuireEditorState extends State<QuireEditor> {
       DocumentSelection(
         base: DocumentPosition(
           nodeId,
-          TextNodePosition(_toModel(selection.baseOffset, modelLength)),
+          TextNodePosition(
+            _snapToGraphemeBoundary(
+              oldText,
+              _toModel(selection.baseOffset, modelLength),
+            ),
+          ),
         ),
         extent: DocumentPosition(
           nodeId,
-          TextNodePosition(_toModel(selection.extentOffset, modelLength)),
+          TextNodePosition(
+            _snapToGraphemeBoundary(
+              oldText,
+              _toModel(selection.extentOffset, modelLength),
+            ),
+          ),
         ),
       ),
     );
+  }
+
+  /// [offset] moved to the nearer edge of the grapheme cluster of [text] it
+  /// falls inside, or left alone if it's already on a cluster boundary.
+  ///
+  /// A tap resolves to a raw code-unit offset via hit-testing on rendered
+  /// glyph geometry, which isn't guaranteed to land on a cluster boundary —
+  /// a picked emoji (a surrogate pair, or wider still for a ZWJ sequence)
+  /// can report a caret position that sits *inside* it. Left unsnapped, a
+  /// later backspace from there deletes half the emoji's code units instead
+  /// of the whole character, and the emoji itself never goes away.
+  int _snapToGraphemeBoundary(String text, int offset) {
+    if (offset <= 0 || offset >= text.length) return offset;
+    var start = 0;
+    for (final grapheme in text.characters) {
+      final end = start + grapheme.length;
+      if (offset > start && offset < end) {
+        return offset - start <= end - offset ? start : end;
+      }
+      if (offset <= end) return offset;
+      start = end;
+    }
+    return offset;
   }
 
   int _commonPrefixLength(String a, String b) {

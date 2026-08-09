@@ -1,5 +1,6 @@
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
@@ -115,6 +116,105 @@ void main() {
 
       final after = controller.document.getNodeById('a')! as TextNode;
       expect(after.text.text, 'hi ');
+    },
+  );
+
+  testWidgets(
+    'a field selection landing mid-emoji (as a tap can, via raw hit-testing) '
+    'snaps to the nearer edge instead of splitting its surrogate pair',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('Hi 😀'))],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QuireEditor(controller: controller)),
+        ),
+      );
+      await tester.tap(find.byType(EditableText).first);
+      await tester.pumpAndSettle();
+
+      // Model text "Hi 😀": H=0 i=1 ' '=2 😀=3..5. Field offsets add 1 for
+      // the leading sentinel (see quire_editor.dart's `_toField`/`_toModel`).
+      final fieldController = tester
+          .widget<EditableText>(find.byType(EditableText).first)
+          .controller;
+
+      fieldController.selection = const TextSelection.collapsed(offset: 5);
+      await tester.pump();
+      expect(
+        controller.composer.selection,
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(3)),
+        ),
+        reason: 'field offset 5 (model 4, mid-emoji) snaps to the near edge',
+      );
+
+      fieldController.selection = const TextSelection.collapsed(offset: 6);
+      await tester.pump();
+      expect(
+        controller.composer.selection,
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(5)),
+        ),
+        reason: 'field offset 6 (model 5, also mid-emoji) snaps the other way',
+      );
+    },
+  );
+
+  testWidgets(
+    'backspacing right after a picked emoji removes the whole emoji, even '
+    'when the caret got there via a tap instead of typing',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText(''))],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Expanded(child: QuireEditor(controller: controller)),
+                QuireToolbar(controller: controller),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      await tester.enterText(find.byType(EditableText).first, 'Hi ');
+      await tester.pump();
+
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Emoji').first);
+      await tester.pumpAndSettle();
+
+      final picker = tester.widget<EmojiPicker>(find.byType(EmojiPicker));
+      picker.onEmojiSelected!(null, const Emoji('😀', 'grinning face'));
+      await tester.pump();
+
+      // The panel stays open after picking (see insertEmoji's doc comment),
+      // so tapping back into the field is how focus normally returns.
+      await tester.tap(find.byType(EditableText).first);
+      await tester.pumpAndSettle();
+      final fieldController = tester
+          .widget<EditableText>(find.byType(EditableText).first)
+          .controller;
+      fieldController.selection = const TextSelection.collapsed(offset: 6);
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      final node = controller.document.getNodeById('a')! as TextNode;
+      expect(node.text.text, 'Hi ');
     },
   );
 
