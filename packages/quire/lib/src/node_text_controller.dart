@@ -88,7 +88,25 @@ class NodeTextController extends TextEditingController {
       case 'italic':
         return style.merge(const TextStyle(fontStyle: FontStyle.italic));
       case 'underline':
-        return _addDecoration(style, TextDecoration.underline);
+        // TextStyle has no property for the gap between text and its
+        // underline — Skia draws it flush against descenders. Rendering the
+        // glyphs as a shadow offset upward, with the real glyph color made
+        // transparent, fakes the gap: the underline (painted separately, at
+        // decorationColor) stays put while the visible "text" shifts up.
+        final resolvedColor =
+            style.color ??
+            Theme.of(context).textTheme.bodyLarge?.color ??
+            Theme.of(context).colorScheme.onSurface;
+        return _addDecoration(style, TextDecoration.underline).merge(
+          TextStyle(
+            color: Colors.transparent,
+            decorationColor: resolvedColor,
+            shadows: [
+              ...?style.shadows,
+              Shadow(color: resolvedColor, offset: const Offset(0, -2)),
+            ],
+          ),
+        );
       case 'strikethrough':
         return _addDecoration(style, TextDecoration.lineThrough);
       case 'code':
@@ -130,7 +148,7 @@ class NodeTextController extends TextEditingController {
         // A fixed size, not a multiplier on the surrounding text: emoji
         // picked from the panel should read as content-sized regardless of
         // the line's own font size (headers, toggle content, etc).
-        return style.merge(const TextStyle(fontSize: 28));
+        return style.merge(const TextStyle(fontSize: 22));
       default:
         // Unknown attribution names are ignored, never thrown on.
         return style;

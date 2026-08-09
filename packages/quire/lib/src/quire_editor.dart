@@ -1827,6 +1827,16 @@ class _QuireEditorState extends State<QuireEditor> {
         if (selection.baseOffset == 0) {
           bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>
               widget.controller.mergeWithPrevious(nodeId);
+        } else {
+          final node = widget.controller.document.getNodeById(nodeId);
+          final modelOffset = node is TextNode
+              ? _toModel(selection.baseOffset, node.text.text.length)
+              : 0;
+          if (node is TextNode &&
+              widget.controller.isEmojiBefore(nodeId, modelOffset)) {
+            bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
+                () => widget.controller.deleteEmojiBefore(nodeId, modelOffset);
+          }
         }
       }
 
@@ -2303,7 +2313,7 @@ class _QuireEditorState extends State<QuireEditor> {
   Widget _buildEmptyContainerHint(BuildContext context, TextNode container) {
     final theme = Theme.of(context);
     final label = container.blockType == 'callout'
-        ? 'Empty callout'
+        ? 'Enter text...'
         : 'Empty toggle';
     return Padding(
       padding: const EdgeInsets.only(left: 24, top: 2),

@@ -1,3 +1,4 @@
+import 'package:characters/characters.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:quire_core/quire_core.dart';
@@ -158,6 +159,48 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     history.execute([
       InsertTextRequest(position, emoji, {const Attribution('largeEmoji')}),
     ]);
+  }
+
+  /// The grapheme cluster ending at [offset] in [nodeId]'s text, if it
+  /// carries the `'largeEmoji'` attribution — i.e. backspacing at [offset]
+  /// would land on a picked emoji. A plain single-character backspace deletes
+  /// by UTF-16 code unit, which would split a surrogate pair or ZWJ sequence
+  /// in half instead of removing the whole emoji; callers use this to detect
+  /// that case and delete the full grapheme in one step instead.
+  String? _emojiGraphemeBefore(String nodeId, int offset) {
+    if (offset <= 0) return null;
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode) return null;
+    final chars = node.text.text.substring(0, offset).characters;
+    if (chars.isEmpty) return null;
+    final grapheme = chars.last;
+    final start = offset - grapheme.length;
+    return node.text.hasAttributionThroughout(
+          const Attribution('largeEmoji'),
+          start,
+          offset,
+        )
+        ? grapheme
+        : null;
+  }
+
+  /// Whether backspacing at [offset] in [nodeId] would hit a picked emoji —
+  /// see [_emojiGraphemeBefore].
+  bool isEmojiBefore(String nodeId, int offset) =>
+      _emojiGraphemeBefore(nodeId, offset) != null;
+
+  /// Deletes the whole emoji grapheme ending at [offset] in [nodeId] as one
+  /// step, rather than letting native backspace delete part of it.
+  void deleteEmojiBefore(String nodeId, int offset) {
+    final grapheme = _emojiGraphemeBefore(nodeId, offset);
+    if (grapheme == null) return;
+    replaceText(
+      nodeId: nodeId,
+      start: offset - grapheme.length,
+      end: offset,
+      insertedText: '',
+    );
+    requestFocus(nodeId);
   }
 
   /// Inserts an [ImageNode] right after the currently-focused node (or at

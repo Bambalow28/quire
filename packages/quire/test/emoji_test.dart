@@ -92,6 +92,32 @@ void main() {
     );
   });
 
+  test(
+    'deleteEmojiBefore removes the whole emoji grapheme, not one code unit',
+    () {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('hi '))],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(3)),
+        ),
+      );
+      controller.insertEmoji('😀');
+
+      final node = controller.document.getNodeById('a')! as TextNode;
+      expect(node.text.text, 'hi 😀');
+      expect(controller.isEmojiBefore('a', node.text.text.length), isTrue);
+
+      controller.deleteEmojiBefore('a', node.text.text.length);
+
+      final after = controller.document.getNodeById('a')! as TextNode;
+      expect(after.text.text, 'hi ');
+    },
+  );
+
   testWidgets(
     'pressing the emoji panel\'s close button returns to the keyboard, not the options list',
     (tester) async {

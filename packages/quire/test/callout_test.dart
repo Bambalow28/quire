@@ -69,13 +69,13 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      expect(find.text('Empty callout'), findsOneWidget);
+      expect(find.text('Enter text...'), findsOneWidget);
 
-      await tester.tap(find.text('Empty callout'));
+      await tester.tap(find.text('Enter text...'));
       await tester.pump();
       await tester.pump();
 
-      expect(find.text('Empty callout'), findsNothing);
+      expect(find.text('Enter text...'), findsNothing);
       final nodes = controller.document.nodesInDocumentOrder.toList();
       expect(nodes, hasLength(2));
       expect((nodes[1] as TextNode).indent, 1);
@@ -101,7 +101,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    expect(find.text('Empty callout'), findsNothing);
+    expect(find.text('Enter text...'), findsNothing);
   });
 
   testWidgets('callout content renders smaller than the callout title', (
