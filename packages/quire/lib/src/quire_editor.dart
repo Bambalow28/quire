@@ -1583,13 +1583,31 @@ class _QuireEditorState extends State<QuireEditor> {
     final newText = _stripSentinel(rawNewText);
 
     if (oldText != newText) {
-      final prefixLen = _commonPrefixLength(oldText, newText);
+      var prefixLen = _commonPrefixLength(oldText, newText);
       final suffixLen = _commonSuffixLength(oldText, newText, prefixLen);
-      final deleteEnd = oldText.length - suffixLen;
+      var deleteEnd = oldText.length - suffixLen;
       final insertedText = newText.substring(
         prefixLen,
         newText.length - suffixLen,
       );
+
+      // A pure deletion (no insertedText — backspace/delete, not a typed
+      // replacement) that lands mid-grapheme means the platform only
+      // removed part of a multi-code-unit character (typically half of a
+      // picked emoji's surrogate pair) instead of the whole thing — iOS's
+      // own soft-keyboard delete isn't reliably grapheme-aware for a custom
+      // TextInputClient the way it is for a stock UITextField. Widen the
+      // range to the enclosing grapheme cluster(s) so the whole character
+      // goes, not a broken half of it.
+      if (insertedText.isEmpty && prefixLen < deleteEnd) {
+        final (expandedStart, expandedEnd) = _expandToGraphemeClusters(
+          oldText,
+          prefixLen,
+          deleteEnd,
+        );
+        prefixLen = expandedStart;
+        deleteEnd = expandedEnd;
+      }
 
       // With a cross-node selection active, this field only ever showed a
       // stale local caret (see `_pushModelToControllers`) — the diff above
@@ -1719,6 +1737,26 @@ class _QuireEditorState extends State<QuireEditor> {
       start = end;
     }
     return offset;
+  }
+
+  /// The tightest `[start, end)` range of [text]'s own grapheme clusters
+  /// that fully contains `[start, end)` — each edge pushed out to the
+  /// boundary of whatever cluster it falls inside, left alone if it's
+  /// already on one. Unlike [_snapToGraphemeBoundary] (nearest edge, for a
+  /// single caret position), this only ever widens — used to recover a
+  /// deletion range the platform clipped to part of a character instead of
+  /// all of it.
+  (int, int) _expandToGraphemeClusters(String text, int start, int end) {
+    var pos = 0;
+    var expandedStart = start;
+    var expandedEnd = end;
+    for (final grapheme in text.characters) {
+      final clusterEnd = pos + grapheme.length;
+      if (pos < start && clusterEnd > start) expandedStart = pos;
+      if (pos < end && clusterEnd > end) expandedEnd = clusterEnd;
+      pos = clusterEnd;
+    }
+    return (expandedStart, expandedEnd);
   }
 
   int _commonPrefixLength(String a, String b) {
@@ -2206,14 +2244,36 @@ class _QuireEditorState extends State<QuireEditor> {
       ),
     );
 
+    // An empty callout title shows its own inline placeholder — same
+    // position as the real text, painted behind it — rather than a second
+    // line below the box (that's [_buildEmptyContainerHint]'s job, for
+    // toggles and for a callout that already has a title but no content
+    // yet).
+    final titleField = node.blockType == 'callout' && node.text.text.isEmpty
+        ? Stack(
+            children: [
+              IgnorePointer(
+                child: Text(
+                  'Enter text...',
+                  style: _styleFor(
+                    theme,
+                    node,
+                  ).copyWith(color: theme.hintColor),
+                ),
+              ),
+              field,
+            ],
+          )
+        : field;
+
     final prefix = _prefixFor(context, node);
     final row = prefix == null
-        ? field
+        ? titleField
         : Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               prefix,
-              Expanded(child: field),
+              Expanded(child: titleField),
             ],
           );
 
@@ -2282,12 +2342,12 @@ class _QuireEditorState extends State<QuireEditor> {
                   ? const BorderRadius.vertical(top: Radius.circular(8))
                   : BorderRadius.circular(8),
             ),
-            child: !hasContent
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [row, _buildEmptyContainerHint(context, node)],
-                  )
-                : row,
+            // No tappable "Empty callout" hint below the title — a callout
+            // with no content yet is just its (single-line) title, with its
+            // own inline placeholder when empty (see `titleField` above).
+            // Content only appears once Enter is pressed on the title (see
+            // commands.dart's `_InsertNewlineCommand`).
+            child: row,
           ),
         );
       default:
@@ -2339,15 +2399,15 @@ class _QuireEditorState extends State<QuireEditor> {
     return next is TextNode && next.indent > container.indent;
   }
 
-  /// Tappable "Empty toggle"/"Empty callout" placeholder shown under a
-  /// container with no content yet — without it, the only way to discover
-  /// one can hold content is to place the caret at the end of its title
-  /// and press Enter, which isn't obvious just by looking at it.
+  /// Tappable "Empty toggle" placeholder shown under a toggle with no
+  /// content yet — without it, the only way to discover one can hold
+  /// content is to place the caret at the end of its title and press Enter,
+  /// which isn't obvious just by looking at it. A callout's own empty state
+  /// is its title's inline placeholder instead (see `titleField` in
+  /// `_buildTextNode`) — no tappable line of its own.
   Widget _buildEmptyContainerHint(BuildContext context, TextNode container) {
     final theme = Theme.of(context);
-    final label = container.blockType == 'callout'
-        ? 'Enter text...'
-        : 'Empty toggle';
+    const label = 'Empty toggle';
     return Padding(
       padding: const EdgeInsets.only(left: 24, top: 2),
       child: GestureDetector(

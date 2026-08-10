@@ -54,7 +54,32 @@ void main() {
   });
 
   testWidgets(
-    'an empty callout shows an "Empty callout" hint; tapping it starts content',
+    'a brand-new (empty-title) callout shows an inline "Enter text..." '
+    'placeholder and nothing else — no separate content line or hint',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'callout',
+              text: AttributedText(''),
+              metadata: const {'blockType': 'callout'},
+            ),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      expect(find.text('Enter text...'), findsOneWidget);
+      // Just the title field — pressing Enter is what reveals content, not
+      // simply inserting the callout.
+      expect(find.byType(EditableText), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'once the title has text, the inline placeholder is gone — and no tap '
+    'affordance for content replaces it',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -69,13 +94,36 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      expect(find.text('Enter text...'), findsOneWidget);
-
-      await tester.tap(find.text('Enter text...'));
-      await tester.pump();
-      await tester.pump();
-
       expect(find.text('Enter text...'), findsNothing);
+      expect(find.byType(EditableText), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'pressing Enter on the title reveals the content line',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'callout',
+              text: AttributedText('Heads up'),
+              metadata: const {'blockType': 'callout'},
+            ),
+          ],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('callout', const TextNodePosition(8)),
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      controller.insertNewline();
+      await tester.pump();
+
+      expect(find.byType(EditableText), findsNWidgets(2));
       final nodes = controller.document.nodesInDocumentOrder.toList();
       expect(nodes, hasLength(2));
       expect((nodes[1] as TextNode).indent, 1);
