@@ -212,6 +212,12 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
         afterNodeId: _focusedNodeId ?? document.nodes.lastOrNull?.id,
       ),
     ]);
+    // InsertNodeRequest already parks the selection in the paragraph right
+    // after the image — requestFocus (not just focusNode) so the caret
+    // actually shows there instead of leaving the user unsure where the
+    // next thing they type will land.
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
   }
 
   void _toggle(Attribution attribution) {
