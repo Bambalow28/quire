@@ -85,4 +85,57 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'tapping inside a selection that spans two paragraphs shows Copy/Cut '
+    'without leaving the tapped node with a local selection to double-paint',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(id: 'a', text: AttributedText('first paragraph here')),
+            TextNode(id: 'b', text: AttributedText('second paragraph here')),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QuireEditor(controller: controller)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final fieldAFinder = find.byType(EditableText).first;
+      final fieldBFinder = find.byType(EditableText).at(1);
+      final start = tester.getTopLeft(fieldAFinder) + const Offset(4, 8);
+      final end = tester.getTopLeft(fieldBFinder) + const Offset(30, 8);
+
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 600));
+      await gesture.moveTo(end);
+      await tester.pump(const Duration(milliseconds: 50));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
+
+      final tapPoint = tester.getTopLeft(fieldAFinder) + const Offset(20, 8);
+      await tester.tapAt(tapPoint);
+      await tester.pumpAndSettle();
+
+      // The document-wide selection survives, and node a's own local
+      // selection stays collapsed — the fix that shows Copy/Cut here does
+      // NOT do it by giving this field a real (or cosmetic) non-collapsed
+      // local selection, which would double-paint against
+      // SelectionOverlayPainter (see _computeOverlayRects).
+      expect(controller.composer.selection?.isCollapsed ?? true, isFalse);
+      final fieldA = tester.widget<EditableText>(fieldAFinder);
+      expect(fieldA.controller.selection.isCollapsed, isTrue);
+
+      expect(find.text('Copy'), findsOneWidget);
+      expect(find.text('Cut'), findsOneWidget);
+    },
+  );
 }

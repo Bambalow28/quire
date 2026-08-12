@@ -904,44 +904,62 @@ class _QuireEditorState extends State<QuireEditor> {
       } else if (_tapRepeatsCaret && position != null) {
         final id = position.nodeId;
         final state = _editableKeys[id]?.currentState;
-        if (state != null) {
-          // `EditableText`'s own built-in toolbar (what `showToolbar()`
-          // opens) reads Cut/Copy/Paste availability off THIS FIELD's own
-          // local `TextEditingValue.selection`, not the document-level
-          // `composer.selection` — merely preserving the latter (all
-          // `_applyThenSuppressStaleReport` protects) left the field's own
-          // selection as whatever it happened to be, which for a tap
-          // landing inside a drag-made selection was still collapsed (the
-          // drag only ever wrote `composer.selection`, never this field's
-          // local one). The toolbar then only offered Select/Select All,
-          // same as for any collapsed caret.
-          void applyAndShow() {
-            state.userUpdateTextEditingValue(
-              state.textEditingValue.copyWith(
-                selection: _textSelectionFrom(
-                  widget.controller.composer.selection,
-                ),
-              ),
-              SelectionChangedCause.tap,
-            );
+        final docSelection = widget.controller.composer.selection;
+        if (state != null && docSelection != null) {
+          final isCrossNode = docSelection.base.nodeId != docSelection.extent.nodeId;
+          if (isCrossNode) {
+            // This field only holds ONE slice of a selection that spans
+            // other nodes too — there's no local range here that's both
+            // correct (`docSelection`'s raw base/extent offsets don't fit
+            // THIS field's own shorter text) and safe to paint (ANY
+            // non-collapsed local selection on a node already covered by
+            // `SelectionOverlayPainter`, see `_computeOverlayRects`, double-
+            // highlights against it). Leave this field's local selection
+            // alone — `contextMenuBuilder`'s `isCrossNode` branch guarantees
+            // Copy/Cut regardless of it — `showToolbar()` alone still opens
+            // the toolbar, the same as it already does for a collapsed
+            // re-tapped caret (see the `_caretAlreadyAt` branch above).
             state.showToolbar();
-          }
+          } else {
+            // Single-node selection: `EditableText`'s own built-in toolbar
+            // (what `showToolbar()` opens) reads Cut/Copy/Paste availability
+            // off THIS FIELD's own local `TextEditingValue.selection`, not
+            // `composer.selection` — merely preserving the latter left the
+            // field's own selection as whatever it happened to be, which
+            // for a tap landing inside a drag-made selection was still
+            // collapsed (the drag only ever wrote `composer.selection`,
+            // never this field's local one), so the toolbar only offered
+            // Select/Select All. Mirror the real range into the field's own
+            // selection instead — safe here since a single-node selection
+            // has no separate overlay to double-paint against
+            // (`_computeOverlayRects` returns empty for one).
+            void applyAndShow() {
+              state.userUpdateTextEditingValue(
+                state.textEditingValue.copyWith(
+                  selection: _textSelectionFrom(docSelection),
+                ),
+                SelectionChangedCause.tap,
+              );
+              state.showToolbar();
+            }
 
-          _applyThenSuppressStaleReport(applyAndShow);
-          // Unlike `_selectWordAt`/`_selectNodeAt` (triggered from a
-          // long-press timer, which has already won the gesture arena
-          // before either runs — so no competing recognizer fires for that
-          // same gesture), this branch runs on a plain tap: `EditableText`'s
-          // own internal tap recognizer for that SAME tap still resolves
-          // the arena a moment later and overwrites this field's local
-          // selection with its own (collapsed, at the tap point) one —
-          // genuinely concurrent for this gesture, not just a stale report
-          // from an earlier one, so a single suppressed apply isn't enough.
-          // Re-apply once more after that recognizer has had its turn.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            applyAndShow();
-          });
+            _applyThenSuppressStaleReport(applyAndShow);
+            // Unlike `_selectWordAt`/`_selectNodeAt` (triggered from a
+            // long-press timer, which has already won the gesture arena
+            // before either runs — so no competing recognizer fires for
+            // that same gesture), this branch runs on a plain tap:
+            // `EditableText`'s own internal tap recognizer for that SAME
+            // tap still resolves the arena a moment later and overwrites
+            // this field's local selection with its own (collapsed, at the
+            // tap point) one — genuinely concurrent for this gesture, not
+            // just a stale report from an earlier one, so a single
+            // suppressed apply isn't enough. Re-apply once more after that
+            // recognizer has had its turn.
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              applyAndShow();
+            });
+          }
         }
       } else if (position != null && _dragBase == null) {
         widget.controller.requestFocus(position.nodeId);
@@ -2256,6 +2274,72 @@ class _QuireEditorState extends State<QuireEditor> {
             final isCrossNode =
                 docSelection != null &&
                 docSelection.base.nodeId != docSelection.extent.nodeId;
+            final transformedItems = [
+              // EditableText's own "Select All" button (from
+              // state.contextMenuButtonItems below) selects only within
+              // this one field's own text — there's no touch path to the
+              // document-wide controller.selectAll() otherwise (Cmd/Ctrl+A
+              // only fires from a hardware keyboard). Replace it so the one
+              // "Select All" button touch users actually have reaches the
+              // whole document, the way the drag handles expect.
+              for (final item in state.contextMenuButtonItems)
+                if (item.type == ContextMenuButtonType.selectAll)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.selectAll,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.selectAll();
+                      _showToolbarForWholeField(state);
+                    },
+                  )
+                else if (isCrossNode &&
+                    item.type == ContextMenuButtonType.copy)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.copy,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.copySelection();
+                    },
+                  )
+                else if (isCrossNode &&
+                    item.type == ContextMenuButtonType.cut)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.cut,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.cutSelection();
+                    },
+                  )
+                else if (isCrossNode &&
+                    item.type == ContextMenuButtonType.paste)
+                  ContextMenuButtonItem(
+                    label: item.label,
+                    type: ContextMenuButtonType.paste,
+                    onPressed: () {
+                      state.hideToolbar();
+                      _pasteWithLinkDetection();
+                    },
+                  )
+                else
+                  item,
+            ];
+            // For a cross-node selection, this field's own local selection
+            // is deliberately left alone (collapsed) when its tap opened
+            // this toolbar — see the `_tapRepeatsCaret` branch in
+            // `_handlePointerUp` — since giving it a real local selection to
+            // generate these from would double-paint against
+            // `SelectionOverlayPainter`. That means `state.contextMenuButtonItems`
+            // above has nothing to transform into Copy/Cut: a collapsed
+            // selection doesn't generate them at all. Add them directly.
+            final hasCopy = transformedItems.any(
+              (i) => i.type == ContextMenuButtonType.copy,
+            );
+            final hasCut = transformedItems.any(
+              (i) => i.type == ContextMenuButtonType.cut,
+            );
             return AdaptiveTextSelectionToolbar.buttonItems(
               anchors: state.contextMenuAnchors,
               buttonItems: [
@@ -2273,56 +2357,23 @@ class _QuireEditorState extends State<QuireEditor> {
                       );
                     },
                   ),
-                // EditableText's own "Select All" button (from
-                // state.contextMenuButtonItems below) selects only within
-                // this one field's own text — there's no touch path to the
-                // document-wide controller.selectAll() otherwise (Cmd/Ctrl+A
-                // only fires from a hardware keyboard). Replace it so the one
-                // "Select All" button touch users actually have reaches the
-                // whole document, the way the drag handles expect.
-                for (final item in state.contextMenuButtonItems)
-                  if (item.type == ContextMenuButtonType.selectAll)
-                    ContextMenuButtonItem(
-                      label: item.label,
-                      type: ContextMenuButtonType.selectAll,
-                      onPressed: () {
-                        state.hideToolbar();
-                        widget.controller.selectAll();
-                        _showToolbarForWholeField(state);
-                      },
-                    )
-                  else if (isCrossNode &&
-                      item.type == ContextMenuButtonType.copy)
-                    ContextMenuButtonItem(
-                      label: item.label,
-                      type: ContextMenuButtonType.copy,
-                      onPressed: () {
-                        state.hideToolbar();
-                        widget.controller.copySelection();
-                      },
-                    )
-                  else if (isCrossNode &&
-                      item.type == ContextMenuButtonType.cut)
-                    ContextMenuButtonItem(
-                      label: item.label,
-                      type: ContextMenuButtonType.cut,
-                      onPressed: () {
-                        state.hideToolbar();
-                        widget.controller.cutSelection();
-                      },
-                    )
-                  else if (isCrossNode &&
-                      item.type == ContextMenuButtonType.paste)
-                    ContextMenuButtonItem(
-                      label: item.label,
-                      type: ContextMenuButtonType.paste,
-                      onPressed: () {
-                        state.hideToolbar();
-                        _pasteWithLinkDetection();
-                      },
-                    )
-                  else
-                    item,
+                ...transformedItems,
+                if (isCrossNode && !hasCopy)
+                  ContextMenuButtonItem(
+                    type: ContextMenuButtonType.copy,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.copySelection();
+                    },
+                  ),
+                if (isCrossNode && !hasCut)
+                  ContextMenuButtonItem(
+                    type: ContextMenuButtonType.cut,
+                    onPressed: () {
+                      state.hideToolbar();
+                      widget.controller.cutSelection();
+                    },
+                  ),
               ],
             );
           },
