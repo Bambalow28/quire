@@ -607,18 +607,31 @@ class _QuireEditorState extends State<QuireEditor> {
   /// (handles, magnifier, copy/paste toolbar). A direct controller write
   /// leaves the overlay null and showToolbar() silently does nothing.
   void _placeCaret(String nodeId, int offset) {
+    // [offset] came from `_positionAt`'s raw glyph-geometry hit-test (a tap
+    // near/on a picked emoji, most commonly one right after picking it,
+    // where the emoji renders wider than the surrounding text) — snap it
+    // the same way the field's own selection-report path already does (see
+    // `_snapToGraphemeBoundary`'s doc comment for exactly this scenario).
+    // Missing this here meant a tap could still leave the caret split
+    // inside a surrogate pair even though that fix already existed
+    // elsewhere: a following backspace then only removed half the emoji's
+    // code units, leaving the other half behind as a broken glyph.
+    final node = widget.controller.document.getNodeById(nodeId);
+    final snappedOffset = node is TextNode
+        ? _snapToGraphemeBoundary(node.text.text, offset)
+        : offset;
     final state = _editableKeys[nodeId]?.currentState;
     if (state != null) {
       state.userUpdateTextEditingValue(
         state.textEditingValue.copyWith(
-          selection: TextSelection.collapsed(offset: _toField(offset)),
+          selection: TextSelection.collapsed(offset: _toField(snappedOffset)),
         ),
         SelectionChangedCause.tap,
       );
     }
     widget.controller.changeSelection(
       DocumentSelection.collapsed(
-        DocumentPosition(nodeId, TextNodePosition(offset)),
+        DocumentPosition(nodeId, TextNodePosition(snappedOffset)),
       ),
     );
   }
