@@ -255,7 +255,7 @@ class _QuireToolbarState extends State<QuireToolbar>
                       _BarButton(
                         tooltip: 'Link',
                         icon: Icons.link,
-                        iconColor: Colors.blue,
+                        iconColor: Theme.of(context).colorScheme.secondary,
                         onPressed: () async {
                           final selection =
                               widget.controller.composer.selection;
