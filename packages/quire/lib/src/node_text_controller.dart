@@ -119,15 +119,10 @@ class NodeTextController extends TextEditingController {
           ),
         );
       case 'link':
-        // `secondary` rather than `primary` — links still read as visually
-        // distinct from the accent used for actions/selection, but a host
-        // app that themes `secondary` (as notesync does) gets links in its
-        // own palette instead of Material's default seed-derived blue.
+        // A fixed blue rather than the theme's primary — links read as
+        // links by convention regardless of the app's accent color.
         return style.merge(
-          TextStyle(
-            color: Theme.of(context).colorScheme.secondary,
-            decoration: TextDecoration.underline,
-          ),
+          const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
         );
       case 'color':
         final color = _parseColor(a.value['hex']);
