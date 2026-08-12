@@ -148,7 +148,17 @@ class NodeTextController extends TextEditingController {
         // A fixed size, not a multiplier on the surrounding text: emoji
         // picked from the panel should read as content-sized regardless of
         // the line's own font size (headers, toggle content, etc).
-        return style.merge(const TextStyle(fontSize: 22));
+        //
+        // `height: 1.0` alongside it: color emoji fonts (Apple Color Emoji
+        // in particular) report unusually tall natural line-height metrics
+        // compared to the surrounding text face. Left at Flutter's default
+        // (no explicit height — each span uses its own font's natural
+        // metrics), that extra built-in leading pushes the glyph off the
+        // shared baseline the smaller surrounding text sits on, reading as
+        // "hanging" above/below center rather than lined up with it.
+        // Pinning height to 1.0 discards the font's own leading so the glyph
+        // sits directly on the shared baseline like any other span.
+        return style.merge(const TextStyle(fontSize: 22, height: 1.0));
       default:
         // Unknown attribution names are ignored, never thrown on.
         return style;

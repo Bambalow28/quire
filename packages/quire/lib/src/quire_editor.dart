@@ -633,6 +633,37 @@ class _QuireEditorState extends State<QuireEditor> {
     return position is TextNodePosition && position.offset == offset;
   }
 
+  /// True if [nodeId]/[offset] falls inside the current (non-collapsed)
+  /// selection — a tap there means "show me the options" the same way a tap
+  /// on an already-placed caret does (see [_caretAlreadyAt]), rather than
+  /// "move the caret here", which is what a tap inside a highlighted range
+  /// did before this existed: it silently collapsed the selection instead of
+  /// bringing up Copy/Cut, unlike every native text field.
+  bool _tapWithinSelection(String nodeId, int offset) {
+    final selection = widget.controller.composer.selection;
+    if (selection == null || selection.isCollapsed) return false;
+    final document = widget.controller.document;
+    final (start, end) = selection.normalize(document);
+    final startIndex = document.getNodeIndexById(start.nodeId);
+    final endIndex = document.getNodeIndexById(end.nodeId);
+    final tapIndex = document.getNodeIndexById(nodeId);
+    if (startIndex < 0 || endIndex < 0 || tapIndex < 0) return false;
+    if (tapIndex < startIndex || tapIndex > endIndex) return false;
+    final startOffset = start.nodePosition;
+    if (tapIndex == startIndex &&
+        startOffset is TextNodePosition &&
+        offset < startOffset.offset) {
+      return false;
+    }
+    final endOffset = end.nodePosition;
+    if (tapIndex == endIndex &&
+        endOffset is TextNodePosition &&
+        offset > endOffset.offset) {
+      return false;
+    }
+    return true;
+  }
+
   /// Resolves a global point to a document position by hit-testing every
   /// text node's live render rect, then mapping through that node's own
   /// `RenderEditable` — the same mapping [_handleFieldTapDown] uses for a
@@ -775,8 +806,12 @@ class _QuireEditorState extends State<QuireEditor> {
       final offset = (position.nodePosition as TextNodePosition).offset;
       // The caret is placed on pointer *up*, not here: a tap must write the
       // selection exactly once, or the caret write races the word selection
-      // a double-tap/long-press produces from the same gesture.
-      _tapRepeatsCaret = _caretAlreadyAt(position.nodeId, offset);
+      // a double-tap/long-press produces from the same gesture. Also true
+      // for a tap anywhere inside an existing (non-collapsed) selection —
+      // see `_tapWithinSelection`.
+      _tapRepeatsCaret =
+          _caretAlreadyAt(position.nodeId, offset) ||
+          _tapWithinSelection(position.nodeId, offset);
       _tapDownAt = event.position;
       // On touch, focus is requested once the gesture is confirmed as a tap
       // (see `_handlePointerUp`/the long-press branch below) rather than
@@ -868,7 +903,17 @@ class _QuireEditorState extends State<QuireEditor> {
         }
       } else if (_tapRepeatsCaret) {
         final id = widget.controller.focusedNodeId;
+        // Same stale-report race `_selectWordAt` guards against: this tap's
+        // own click still reaches `EditableText`'s internal tap-up handling
+        // a moment later, which reports its own (collapsed, at the tap
+        // point) local selection back up through `_onControllerChanged` —
+        // left alone, that silently collapses the very selection this
+        // branch exists to preserve, right after `showToolbar` opens it for.
+        _suppressFieldSelectionSync = true;
         if (id != null) _editableKeys[id]?.currentState?.showToolbar();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _suppressFieldSelectionSync = false;
+        });
       } else if (position != null && _dragBase == null) {
         widget.controller.requestFocus(position.nodeId);
         _placeCaret(
@@ -1494,6 +1539,18 @@ class _QuireEditorState extends State<QuireEditor> {
         if (selection != controller.selection) {
           controller.selection = selection;
         }
+      } else if (!controller.selection.isCollapsed) {
+        // This node isn't the exact single-node selection target (either
+        // there's no selection, or this node is one piece of a wider
+        // multi-node one — painted instead by `SelectionOverlayPainter`,
+        // see `_computeOverlayRects`) — a non-collapsed local selection left
+        // here (e.g. from a word long-press right before the drag extended
+        // past this node into a cross-node range) would keep painting its
+        // own native `selectionColor` highlight on top of that overlay,
+        // double-shading wherever the two overlap.
+        controller.selection = TextSelection.collapsed(
+          offset: controller.selection.baseOffset.clamp(0, fieldText.length),
+        );
       }
       controller.setAttributedText(node.text);
     }
