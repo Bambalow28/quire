@@ -901,19 +901,48 @@ class _QuireEditorState extends State<QuireEditor> {
         } else {
           _selectWordAt(nodeId, offset);
         }
-      } else if (_tapRepeatsCaret) {
-        final id = widget.controller.focusedNodeId;
-        // Same stale-report race `_selectWordAt` guards against: this tap's
-        // own click still reaches `EditableText`'s internal tap-up handling
-        // a moment later, which reports its own (collapsed, at the tap
-        // point) local selection back up through `_onControllerChanged` —
-        // left alone, that silently collapses the very selection this
-        // branch exists to preserve, right after `showToolbar` opens it for.
-        _suppressFieldSelectionSync = true;
-        if (id != null) _editableKeys[id]?.currentState?.showToolbar();
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _suppressFieldSelectionSync = false;
-        });
+      } else if (_tapRepeatsCaret && position != null) {
+        final id = position.nodeId;
+        final state = _editableKeys[id]?.currentState;
+        if (state != null) {
+          // `EditableText`'s own built-in toolbar (what `showToolbar()`
+          // opens) reads Cut/Copy/Paste availability off THIS FIELD's own
+          // local `TextEditingValue.selection`, not the document-level
+          // `composer.selection` — merely preserving the latter (all
+          // `_applyThenSuppressStaleReport` protects) left the field's own
+          // selection as whatever it happened to be, which for a tap
+          // landing inside a drag-made selection was still collapsed (the
+          // drag only ever wrote `composer.selection`, never this field's
+          // local one). The toolbar then only offered Select/Select All,
+          // same as for any collapsed caret.
+          void applyAndShow() {
+            state.userUpdateTextEditingValue(
+              state.textEditingValue.copyWith(
+                selection: _textSelectionFrom(
+                  widget.controller.composer.selection,
+                ),
+              ),
+              SelectionChangedCause.tap,
+            );
+            state.showToolbar();
+          }
+
+          _applyThenSuppressStaleReport(applyAndShow);
+          // Unlike `_selectWordAt`/`_selectNodeAt` (triggered from a
+          // long-press timer, which has already won the gesture arena
+          // before either runs — so no competing recognizer fires for that
+          // same gesture), this branch runs on a plain tap: `EditableText`'s
+          // own internal tap recognizer for that SAME tap still resolves
+          // the arena a moment later and overwrites this field's local
+          // selection with its own (collapsed, at the tap point) one —
+          // genuinely concurrent for this gesture, not just a stale report
+          // from an earlier one, so a single suppressed apply isn't enough.
+          // Re-apply once more after that recognizer has had its turn.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            applyAndShow();
+          });
+        }
       } else if (position != null && _dragBase == null) {
         widget.controller.requestFocus(position.nodeId);
         _placeCaret(

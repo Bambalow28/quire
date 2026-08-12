@@ -72,6 +72,17 @@ void main() {
       expect(controller.composer.selection?.isCollapsed ?? true, isFalse);
       final state = tester.state<EditableTextState>(find.byType(EditableText));
       expect(state.selectionOverlay?.toolbarIsVisible ?? false, isTrue);
+
+      // Not just *a* toolbar — the field's own local selection (what
+      // EditableText's built-in toolbar actually reads Cut/Copy/Paste
+      // availability from) must also still be the real non-collapsed range,
+      // or the toolbar that opens only offers Select/Select All, same as it
+      // would for a collapsed caret.
+      expect(state.textEditingValue.selection.isCollapsed, isFalse);
+      expect(
+        state.contextMenuButtonItems.map((i) => i.type),
+        contains(ContextMenuButtonType.copy),
+      );
     },
   );
 }
