@@ -203,6 +203,44 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     requestFocus(nodeId);
   }
 
+  /// What a physical Backspace key press does at the caret — deletes the
+  /// current selection, merges into the previous node at offset 0, deletes
+  /// a picked emoji whole (see [deleteEmojiBefore]), or else deletes one
+  /// grapheme cluster. The emoji panel's own Backspace button (see
+  /// `quire_toolbar.dart`'s `_EmojiActionBar`) needs this: it replaces the
+  /// keyboard entirely while the panel is open, so there is no physical or
+  /// soft-keyboard backspace key to press.
+  void backspaceAtCaret() {
+    final selection = composer.selection;
+    if (selection == null) return;
+    if (!selection.isCollapsed) {
+      deleteSelection();
+      return;
+    }
+    final position = selection.extent;
+    final nodePosition = position.nodePosition;
+    if (nodePosition is! TextNodePosition) return;
+    final offset = nodePosition.offset;
+    if (offset == 0) {
+      mergeWithPrevious(position.nodeId);
+      return;
+    }
+    final node = document.getNodeById(position.nodeId);
+    if (node is! TextNode) return;
+    if (isEmojiBefore(position.nodeId, offset)) {
+      deleteEmojiBefore(position.nodeId, offset);
+      return;
+    }
+    final grapheme = node.text.text.substring(0, offset).characters.last;
+    replaceText(
+      nodeId: position.nodeId,
+      start: offset - grapheme.length,
+      end: offset,
+      insertedText: '',
+    );
+    requestFocus(position.nodeId);
+  }
+
   /// Inserts an [ImageNode] right after the currently-focused node (or at
   /// the document end if nothing is focused).
   void insertImage(String url) {

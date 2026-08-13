@@ -345,7 +345,7 @@ class _QuireToolbarState extends State<QuireToolbar>
 /// The emoji picker ships its own light-only default palette — this maps it
 /// onto the host app's [ColorScheme] so it reads as part of the editor
 /// (light or dark) instead of a foreign light popup dropped on top of it.
-Config _emojiPickerConfig(ColorScheme scheme) => Config(
+Config _emojiPickerConfig(ColorScheme scheme, VoidCallback onBackspace) => Config(
   // Null, not the package's own fixed default (256): the picker now lives
   // inside an [Expanded] in [_EmojiPanel], so its own ancestor already
   // bounds its height — a second, independent fixed height here just fights
@@ -369,8 +369,11 @@ Config _emojiPickerConfig(ColorScheme scheme) => Config(
     // button always clips against its own circle. Building the row
     // ourselves with a circular *button style* instead of a separate
     // undersized avatar sidesteps that entirely.
-    customBottomActionBar: (config, state, showSearchView) =>
-        _EmojiActionBar(scheme: scheme, state: state, onSearch: showSearchView),
+    customBottomActionBar: (config, state, showSearchView) => _EmojiActionBar(
+      scheme: scheme,
+      onSearch: showSearchView,
+      onBackspace: onBackspace,
+    ),
   ),
   searchViewConfig: SearchViewConfig(
     backgroundColor: scheme.surfaceContainerHighest,
@@ -387,13 +390,13 @@ Config _emojiPickerConfig(ColorScheme scheme) => Config(
 class _EmojiActionBar extends StatelessWidget {
   const _EmojiActionBar({
     required this.scheme,
-    required this.state,
     required this.onSearch,
+    required this.onBackspace,
   });
 
   final ColorScheme scheme;
-  final EmojiViewState state;
   final VoidCallback onSearch;
+  final VoidCallback onBackspace;
 
   @override
   Widget build(BuildContext context) {
@@ -420,7 +423,7 @@ class _EmojiActionBar extends StatelessWidget {
             tooltip: 'Backspace',
             style: buttonStyle,
             icon: const Icon(Icons.backspace),
-            onPressed: state.onBackspacePressed,
+            onPressed: onBackspace,
           ),
         ],
       ),
@@ -621,7 +624,7 @@ class _EmojiPanel extends StatelessWidget {
             ),
             Expanded(
               child: EmojiPicker(
-                config: _emojiPickerConfig(scheme),
+                config: _emojiPickerConfig(scheme, controller.backspaceAtCaret),
                 // Picking an emoji shouldn't bring the keyboard back up —
                 // leave the field unfocused so the picker stays open for
                 // more picks, mirroring how the options panel itself stays

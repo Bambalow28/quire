@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   testWidgets(
@@ -292,6 +293,68 @@ void main() {
       // behind, the keyboard slot is what's showing again.
       expect(find.byType(EmojiPicker), findsNothing);
       expect(find.text('Bullet list'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'the emoji panel\'s own Backspace button removes the just-picked emoji '
+    '— it replaces the keyboard while open, so there is no other backspace '
+    'to press',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.reset);
+      // The picker's recent-emoji lookup goes through the shared_preferences
+      // plugin channel — unmocked, that Future never resolves, so the panel
+      // stays stuck on its loading indicator forever and the Backspace
+      // button never appears.
+      SharedPreferences.setMockInitialValues({});
+
+      // The emoji ("😀", 2 UTF-16 code units) already carries the same
+      // 'largeEmoji' attribution `insertEmoji` would give it — set up this
+      // way, rather than picking it through the panel mid-test, so the
+      // picker's `Config` (rebuilt fresh on every parent rebuild — see
+      // `_emojiPickerConfig`) stays referentially stable once built. A
+      // changed `Config` makes `EmojiPickerState.didUpdateWidget` drop
+      // `_loaded` and reload its emoji data asynchronously, which the
+      // widget-test pump loop has no reliable way to wait out.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'a',
+              text: AttributedText('hi 😀', [
+                const AttributionSpan(Attribution('largeEmoji'), 3, 5),
+              ]),
+            ),
+          ],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(5)),
+        ),
+      );
+      controller.focusNode('a');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QuireToolbar(controller: controller)),
+        ),
+      );
+
+      await tester.tap(find.byIcon(Icons.add));
+      tester.view.viewInsets = FakeViewPadding.zero;
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Emoji').first);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Backspace'));
+      await tester.pump();
+
+      final node = controller.document.getNodeById('a')! as TextNode;
+      expect(node.text.text, 'hi ');
     },
   );
 }
