@@ -1389,6 +1389,11 @@ class _QuireEditorState extends State<QuireEditor> {
     ];
   }
 
+  /// The position the ghost caret is currently showing (or was last asked
+  /// to show) for, and its measured rect — see [_buildGhostCaret].
+  DocumentPosition? _ghostCaretPosition;
+  Rect? _ghostCaretRect;
+
   /// A dimmed caret-shaped bar at [composer.selection]'s position, shown
   /// only when nothing actually holds real focus there — e.g. the +/emoji
   /// panel is open, which deliberately avoids stealing focus back so it
@@ -1400,10 +1405,32 @@ class _QuireEditorState extends State<QuireEditor> {
   /// never doubles up with the native cursor.
   Widget? _buildGhostCaret(BuildContext context) {
     final selection = widget.controller.composer.selection;
-    if (selection == null || !selection.isCollapsed) return null;
+    if (selection == null || !selection.isCollapsed) {
+      _ghostCaretPosition = null;
+      return null;
+    }
     final position = selection.extent;
-    if (_focusNodes[position.nodeId]?.hasFocus ?? false) return null;
-    final rect = _caretRectAt(position);
+    if (_focusNodes[position.nodeId]?.hasFocus ?? false) {
+      _ghostCaretPosition = null;
+      return null;
+    }
+    if (_ghostCaretPosition != position) {
+      // `_caretRectAt` reads `RenderEditable` geometry that's still last
+      // frame's — e.g. right after an emoji insert, the layout carrying the
+      // new (wider) text hasn't run for this frame yet — the same
+      // stale-until-the-frame-paints problem `_scheduleChecklistBoxMeasure
+      // ment` already solves for the checklist checkbox box. Painting
+      // `_caretRectAt(position)` straight into this build would flash the
+      // caret at the OLD position for one frame before jumping to the new
+      // one. Defer to a post-frame measurement instead and paint nothing
+      // until it lands — one frame of absence reads far better than a
+      // visible jump.
+      _ghostCaretPosition = position;
+      _ghostCaretRect = null;
+      _scheduleGhostCaretMeasurement(position);
+      return null;
+    }
+    final rect = _ghostCaretRect;
     if (rect == null) return null;
     return Positioned(
       key: const ValueKey('quire-ghost-caret'),
@@ -1418,6 +1445,19 @@ class _QuireEditorState extends State<QuireEditor> {
         ),
       ),
     );
+  }
+
+  void _scheduleGhostCaretMeasurement(DocumentPosition position) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // The desired position may have moved on (another insert, real focus
+      // returning) since this was scheduled — only apply a measurement
+      // that's still for the position it's currently wanted at.
+      if (_ghostCaretPosition != position) return;
+      final rect = _caretRectAt(position);
+      if (rect == _ghostCaretRect) return;
+      setState(() => _ghostCaretRect = rect);
+    });
   }
 
   /// Moves the dragged handle to wherever [globalPosition] lands, keeping
@@ -1555,6 +1595,10 @@ class _QuireEditorState extends State<QuireEditor> {
       _focusNodes.remove(staleId)?.dispose();
       _editableKeys.remove(staleId);
       _checklistBoxes.remove(staleId);
+      if (_ghostCaretPosition?.nodeId == staleId) {
+        _ghostCaretPosition = null;
+        _ghostCaretRect = null;
+      }
     }
 
     for (final node in widget.controller.document.nodesInDocumentOrder) {
@@ -1709,7 +1753,45 @@ class _QuireEditorState extends State<QuireEditor> {
     final focusNode = _focusNodes[id];
     if (focusNode == null) return;
     _handledFocusRequest = request;
-    if (!focusNode.hasFocus) focusNode.requestFocus();
+    if (focusNode.hasFocus) return;
+    // Only a *pre-existing* selection needs protecting below — e.g. the
+    // +/emoji panel closing hands focus back to exactly where the caret
+    // already was. A fresh mouse click, by contrast, requests focus on
+    // pointer-down before it has a position at all (`composer.selection` is
+    // still whatever it was before this click, often `null`) — its real,
+    // correct selection only shows up *after* this, via EditableText's own
+    // internal click handling. There's nothing to restore in that case, and
+    // trying to would overwrite that legitimate new position with the stale
+    // pre-click one once it resolves.
+    final selectionBeforeFocus = widget.controller.composer.selection;
+    focusNode.requestFocus();
+    if (selectionBeforeFocus == null) return;
+    // Gaining real focus here runs through `EditableText`'s own internal
+    // focus-change handling (and, once it reopens its `TextInputConnection`,
+    // whatever the platform echoes back for the newly-focused field) — both
+    // write straight into this node's `NodeTextController` selection with no
+    // idea where the model's own (grapheme-safe) caret actually is. Left
+    // alone, that write doesn't just leave the *field* stale: the field
+    // controller's own listener (`_onControllerChanged`) treats ANY outside
+    // write to its selection as a genuine report and feeds it back into
+    // `composer.selection` too (snapped, but snapped from the wrong raw
+    // offset) — corrupting the model itself. This is exactly the gap
+    // between "backspace still works while the +/emoji panel never closes"
+    // (nothing here ever runs) and "breaks again once the panel closes and
+    // reopens" (this path runs, unguarded, every time): `_shortcutBindings`'
+    // physical-Backspace binding reads exactly the selection this echo
+    // would have polluted. Restoring the known-correct pre-focus value a
+    // frame later — after the echo has had its turn — fixes both the model
+    // and (via the normal model→field push `changeSelection` triggers) the
+    // field in one step, rather than trying to distinguish a real echo from
+    // a legitimate report.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (widget.controller.composer.selection == selectionBeforeFocus) {
+        return;
+      }
+      widget.controller.changeSelection(selectionBeforeFocus);
+    });
   }
 
   /// Diffs the field's current plain text against the model's, as a single

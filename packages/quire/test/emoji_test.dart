@@ -1,4 +1,5 @@
 import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -431,6 +432,20 @@ void main() {
       final picker = tester.widget<EmojiPicker>(find.byType(EmojiPicker));
       picker.onEmojiSelected!(null, const Emoji('😀', 'grinning face'));
       await tester.pump();
+      // Nothing paints on this very first pump — not even at the stale
+      // (pre-insert) position `_caretRectAt` would compute if read straight
+      // from `RenderEditable` here. Painting that stale rect immediately,
+      // then correcting it once layout catches up, is exactly the visible
+      // "appears before the emoji, jumps to after it" bug this guards
+      // against; see `_scheduleGhostCaretMeasurement`'s doc comment.
+      expect(
+        find.byKey(const ValueKey('quire-ghost-caret')),
+        findsNothing,
+        reason:
+            'the rect is deferred to a post-frame measurement, not painted '
+            'from this frame\'s (still stale) RenderEditable geometry',
+      );
+      await tester.pump();
 
       expect(
         find.byKey(const ValueKey('quire-ghost-caret')),
@@ -439,6 +454,88 @@ void main() {
             'no field has real focus once the panel is open, so nothing '
             'shows where the next insert will land without this',
       );
+    },
+  );
+
+  testWidgets(
+    'backspace still removes the whole emoji after the panel closes and '
+    'reopens, not just while it stays open',
+    (tester) async {
+      // Desktop: closing the panel hands focus back immediately via
+      // `requestFocus` (no software keyboard to animate back up first) —
+      // the same `requestFocus`-driven path a real device takes, without
+      // this test needing to fake a keyboard-rise animation to get there.
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
+
+      // Pre-populated with the same 'largeEmoji' attribution `insertEmoji`
+      // gives it (see the "own Backspace button" test above for why this
+      // sidesteps the emoji picker's own async reload).
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'a',
+              text: AttributedText('hi 😀', [
+                const AttributionSpan(Attribution('largeEmoji'), 3, 5),
+              ]),
+            ),
+          ],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(5)),
+        ),
+      );
+      controller.focusNode('a');
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Expanded(child: QuireEditor(controller: controller)),
+                QuireToolbar(controller: controller),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      // Open the panel (drops real focus) then close it (hands real focus
+      // back via `QuireEditorController.requestFocus`, not a tap) — the
+      // exact transition the bug report described as breaking backspace,
+      // as opposed to leaving the panel open the whole time.
+      await tester.tap(find.byIcon(Icons.add));
+      await tester.pump();
+      await tester.tap(find.byIcon(Icons.close));
+      // One pump: `_maybeRequestFocus` grants real focus and schedules its
+      // own re-sync for the *next* frame.
+      await tester.pump();
+
+      // Simulate the race `_maybeRequestFocus`'s post-frame re-sync exists
+      // to correct: on a real device, gaining real focus here runs through
+      // EditableText's own internal focus-change handling and/or a platform
+      // IME echo, either of which can overwrite the field's local selection
+      // with something that has no idea where the model's grapheme-safe
+      // caret actually is — a plain widget test's synthetic focus grant
+      // doesn't reproduce that echo on its own, so it's injected directly.
+      final fieldController = tester
+          .widget<EditableText>(find.byType(EditableText).first)
+          .controller;
+      fieldController.selection = TextSelection.collapsed(
+        offset: fieldController.text.length - 1,
+      );
+      // The scheduled re-sync should correct this back before Backspace is
+      // ever pressed.
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pump();
+
+      final node = controller.document.getNodeById('a')! as TextNode;
+      expect(node.text.text, 'hi ');
+
+      debugDefaultTargetPlatformOverride = null;
     },
   );
 }
