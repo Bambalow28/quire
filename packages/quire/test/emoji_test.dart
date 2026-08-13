@@ -203,13 +203,45 @@ void main() {
 
       // The panel stays open after picking (see insertEmoji's doc comment),
       // so tapping back into the field is how focus normally returns.
-      await tester.tap(find.byType(EditableText).first);
-      await tester.pumpAndSettle();
       final fieldController = tester
           .widget<EditableText>(find.byType(EditableText).first)
           .controller;
-      fieldController.selection = const TextSelection.collapsed(offset: 6);
+
+      // No pump between the tap and the injected race below: quire's own
+      // `_placeCaret` already ran synchronously as part of dispatching the
+      // pointer-up event, and its correction (see the pointer-up handler's
+      // plain-tap branch in quire_editor.dart) is scheduled for the *next*
+      // frame — this is the window where EditableText's own internal tap
+      // recognizer, which resolves the gesture arena asynchronously rather
+      // than synchronously with quire's, can still race in and overwrite
+      // the field's local selection with its own (potentially mid-emoji)
+      // offset.
+      await tester.tap(find.byType(EditableText).first);
+      final resolved = fieldController.selection;
+
+      // Simulate that race: EditableText's own recognizer landing a raw,
+      // un-snapped offset that splits the emoji's surrogate pair. Left
+      // uncorrected, a Backspace right after this would only remove half
+      // the emoji instead of the whole thing.
+      fieldController.selection = const TextSelection.collapsed(offset: 0);
       await tester.pump();
+
+      // The scheduled re-snap should have corrected the race back to
+      // exactly what quire's own tap handling resolved, before Backspace is
+      // ever pressed.
+      expect(fieldController.selection, resolved);
+
+      // Whatever the tap actually resolved to, move it explicitly to right
+      // after the emoji — this asserts the *outcome* Backspace should
+      // produce from there, independent of exactly where a default tap on
+      // this render box happens to land.
+      final endOffset = fieldController.text.length;
+      fieldController.selection = TextSelection.collapsed(offset: endOffset);
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', TextNodePosition(endOffset - 1)),
+        ),
+      );
 
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();
@@ -355,6 +387,58 @@ void main() {
 
       final node = controller.document.getNodeById('a')! as TextNode;
       expect(node.text.text, 'hi ');
+    },
+  );
+
+  testWidgets(
+    'inserting an emoji from the panel leaves a ghost caret where the next '
+    'insert will land, since the panel deliberately keeps real focus away',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('Hi '))],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Column(
+              children: [
+                Expanded(child: QuireEditor(controller: controller)),
+                QuireToolbar(controller: controller),
+              ],
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(EditableText).first);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('quire-ghost-caret')),
+        findsNothing,
+        reason:
+            'the native cursor is already showing while the field has real focus',
+      );
+
+      await tester.tap(find.byTooltip('More options'));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Emoji').first);
+      await tester.pumpAndSettle();
+
+      final picker = tester.widget<EmojiPicker>(find.byType(EmojiPicker));
+      picker.onEmojiSelected!(null, const Emoji('😀', 'grinning face'));
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey('quire-ghost-caret')),
+        findsOneWidget,
+        reason:
+            'no field has real focus once the panel is open, so nothing '
+            'shows where the next insert will land without this',
+      );
     },
   );
 }

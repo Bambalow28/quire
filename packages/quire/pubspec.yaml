@@ -22,3 +22,6 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+  # Mocks emoji_picker_flutter's recent-emoji lookup in emoji_test.dart —
+  # unmocked, that platform-channel Future never resolves in a widget test.
+  shared_preferences: ^2.3.3

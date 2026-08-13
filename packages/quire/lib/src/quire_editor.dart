@@ -333,6 +333,7 @@ class _QuireEditorState extends State<QuireEditor> {
             ),
           ),
           ..._buildSelectionHandles(context),
+          if (_buildGhostCaret(context) case final ghostCaret?) ghostCaret,
         ],
       ),
     );
@@ -976,10 +977,24 @@ class _QuireEditorState extends State<QuireEditor> {
         }
       } else if (position != null && _dragBase == null) {
         widget.controller.requestFocus(position.nodeId);
-        _placeCaret(
-          position.nodeId,
-          (position.nodePosition as TextNodePosition).offset,
-        );
+        final nodeId = position.nodeId;
+        final offset = (position.nodePosition as TextNodePosition).offset;
+        _placeCaret(nodeId, offset);
+        // Same race as the tap-inside-selection branch above (see its
+        // comment): EditableText's own internal tap recognizer for this
+        // SAME tap resolves the gesture arena a moment later and overwrites
+        // this field's local selection with its own raw, un-snapped
+        // hit-tested offset — which can land mid-emoji-grapheme. Left
+        // uncorrected, a physical Backspace right after tapping back into
+        // the field reads that stale offset (`_shortcutBindings` uses the
+        // field's own local selection, not `composer.selection`) and misses
+        // the whole-emoji-delete path, splitting the emoji instead of
+        // removing it. Re-snap once more after that recognizer has had its
+        // turn.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _placeCaret(nodeId, offset);
+        });
       }
     }
     _tapRepeatsCaret = false;
@@ -1372,6 +1387,37 @@ class _QuireEditorState extends State<QuireEditor> {
         onDragUpdate: _dragSelectionHandle,
       ),
     ];
+  }
+
+  /// A dimmed caret-shaped bar at [composer.selection]'s position, shown
+  /// only when nothing actually holds real focus there — e.g. the +/emoji
+  /// panel is open, which deliberately avoids stealing focus back so it
+  /// stays open for repeated picks (see `insertEmoji`'s doc comment) — so
+  /// `EditableText`'s own native cursor, which only blinks while its
+  /// `FocusNode.hasFocus` is true, isn't painting anything there. Without
+  /// this the user has no visual sign of where the next insert will land.
+  /// Left `null` (nothing painted) the moment real focus returns, so it
+  /// never doubles up with the native cursor.
+  Widget? _buildGhostCaret(BuildContext context) {
+    final selection = widget.controller.composer.selection;
+    if (selection == null || !selection.isCollapsed) return null;
+    final position = selection.extent;
+    if (_focusNodes[position.nodeId]?.hasFocus ?? false) return null;
+    final rect = _caretRectAt(position);
+    if (rect == null) return null;
+    return Positioned(
+      key: const ValueKey('quire-ghost-caret'),
+      left: rect.left,
+      top: rect.top,
+      width: 2,
+      height: rect.height,
+      child: IgnorePointer(
+        child: Container(
+          color: (widget.cursorColor ?? Theme.of(context).colorScheme.primary)
+              .withValues(alpha: 0.5),
+        ),
+      ),
+    );
   }
 
   /// Moves the dragged handle to wherever [globalPosition] lands, keeping
