@@ -333,6 +333,7 @@ class _QuireToolbarState extends State<QuireToolbar>
                         onPickImage: widget.onPickImage,
                         onShowEmoji: () =>
                             setState(() => _showEmojiPicker = true),
+                        onClose: _togglePanel,
                       ),
               ),
           ],
@@ -438,11 +439,21 @@ class _OptionsPanel extends StatelessWidget {
     required this.controller,
     this.onPickImage,
     required this.onShowEmoji,
+    required this.onClose,
   });
 
   final QuireEditorController controller;
   final Future<String?> Function()? onPickImage;
   final VoidCallback onShowEmoji;
+
+  /// Closes the whole panel (mirrors the bar's own "X"/"+" toggle) — called
+  /// after a one-shot pick (block type, table, image, find) so choosing an
+  /// option hands focus straight back to the editor instead of leaving the
+  /// panel sitting open. Steppers (indent, line spacing), the alignment row,
+  /// undo/redo, and the emoji launcher (which swaps the panel's own slot
+  /// rather than picking anything) don't call this — those are used
+  /// repeatedly in a row.
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -455,7 +466,10 @@ class _OptionsPanel extends StatelessWidget {
       // Each of these turns itself off when pressed while lit (see
       // QuireEditorController.setBlockType).
       selected: controller.isBlockType(blockType),
-      onTap: () => controller.setBlockType(blockType),
+      onTap: () {
+        controller.setBlockType(blockType);
+        onClose();
+      },
     );
 
     // A floating card in the keyboard's slot, not a slab filling it: the
@@ -539,6 +553,7 @@ class _OptionsPanel extends StatelessWidget {
                 final size = await showInsertTableDialog(context);
                 if (size == null || !context.mounted) return;
                 controller.insertTable(rows: size.rows, columns: size.columns);
+                onClose();
               },
             ),
             if (onPickImage != null)
@@ -548,6 +563,7 @@ class _OptionsPanel extends StatelessWidget {
                 onTap: () async {
                   final url = await onPickImage!();
                   if (url != null) controller.insertImage(url);
+                  onClose();
                 },
               ),
             _OptionRow(
@@ -567,7 +583,10 @@ class _OptionsPanel extends StatelessWidget {
             _OptionRow(
               label: 'Find & replace',
               icon: Icons.search,
-              onTap: controller.openFind,
+              onTap: () {
+                controller.openFind();
+                onClose();
+              },
             ),
             _OptionRow(
               label: 'Undo',
