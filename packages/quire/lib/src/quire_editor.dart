@@ -37,11 +37,11 @@ class _NoHandleTextSelectionControls extends EmptyTextSelectionControls
 
 final _noHandleTextSelectionControls = _NoHandleTextSelectionControls();
 
-/// Paints the highlight for a selection that spans more than one node — a
-/// field only paints its own (single-node) selection while focused, so the
-/// editor paints the rest itself. [rects] are already in the editor's local
-/// coordinate space. Pure paint logic, no document/render lookups, so it's
-/// trivially testable in isolation.
+/// Paints the highlight for the current selection, single-node or not — each
+/// field's own `selectionColor` is transparent (see the field build), so
+/// this is the only thing that draws selection highlight. [rects] are
+/// already in the editor's local coordinate space. Pure paint logic, no
+/// document/render lookups, so it's trivially testable in isolation.
 class SelectionOverlayPainter extends CustomPainter {
   const SelectionOverlayPainter({required this.rects, required this.color});
 
@@ -318,9 +318,8 @@ class _QuireEditorState extends State<QuireEditor> {
         key: _editorKey,
         children: [
           scrollView,
-          // Only a multi-node selection ever produces rects here — a
-          // single-node selection is left entirely to that node's own field,
-          // so this paints nothing and doesn't regress today's behaviour.
+          // Paints every non-collapsed selection, single-node or not — see
+          // `_computeOverlayRects`.
           IgnorePointer(
             child: CustomPaint(
               size: Size.infinite,
@@ -1097,13 +1096,17 @@ class _QuireEditorState extends State<QuireEditor> {
   }
 
   /// Rects (in this editor's own coordinate space) covering every node a
-  /// multi-node selection spans, for [SelectionOverlayPainter] — empty for
-  /// no selection, a collapsed one, or one confined to a single node (that
-  /// case is left entirely to the field's own painting).
+  /// selection spans, for [SelectionOverlayPainter] — empty for no selection
+  /// or a collapsed one. Every wrapped line but the one holding the
+  /// selection's end is stretched to the render width, so both a selection
+  /// wrapped across several lines in one paragraph and one spanning several
+  /// paragraphs read as one continuous highlight instead of a row of boxes
+  /// stopping short at each line's last glyph (see the `selectionColor:
+  /// Colors.transparent` comment on the field — this is now the only thing
+  /// that paints a selection highlight, single-node or not).
   List<Rect> _computeOverlayRects() {
     final selection = widget.controller.composer.selection;
     if (selection == null || selection.isCollapsed) return const [];
-    if (selection.base.nodeId == selection.extent.nodeId) return const [];
 
     final document = widget.controller.document;
     final (startPos, endPos) = selection.normalize(document);
@@ -1131,18 +1134,22 @@ class _QuireEditorState extends State<QuireEditor> {
           : length;
       if (segEnd <= segStart) continue;
 
-      // A node fully covered up to its own end (every node except the last)
-      // has its boxes stretched to the render width, so consecutive
-      // paragraphs read as one continuous highlight instead of stopping
-      // short at the last glyph on each line.
-      final stretchToEdge = i != endIndex;
       final boxes = renderEditable.getBoxesForSelection(
         TextSelection(
           baseOffset: _toField(segStart),
           extentOffset: _toField(segEnd),
         ),
       );
+      // Every box but the one on the selection's very last visual line gets
+      // stretched to the render width — that covers a node's own wrapped
+      // lines (i != endIndex, or i == endIndex with more than one box) as
+      // well as the gap between consecutive paragraphs. `getBoxesForSelection`
+      // returns boxes in visual order, so the last box is that last line.
+      final lastLineTop = (i == endIndex && boxes.isNotEmpty)
+          ? boxes.last.top
+          : null;
       for (final box in boxes) {
+        final stretchToEdge = lastLineTop == null || box.top < lastLineTop;
         final rect = stretchToEdge
             ? Rect.fromLTRB(
                 box.left,
@@ -2414,7 +2421,12 @@ class _QuireEditorState extends State<QuireEditor> {
           textCapitalization: TextCapitalization.sentences,
           cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
           backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
-          selectionColor: theme.colorScheme.primary.withValues(alpha: 0.3),
+          // Transparent, not the highlight color: `SelectionOverlayPainter`
+          // (via `_computeOverlayRects`) now paints every selection itself,
+          // single-node or not, so it can stretch wrapped lines to the render
+          // width for a continuous highlight — this field painting its own on
+          // top too would double-shade the overlap.
+          selectionColor: Colors.transparent,
           maxLines: null,
           keyboardType: TextInputType.multiline,
           textInputAction: TextInputAction.newline,

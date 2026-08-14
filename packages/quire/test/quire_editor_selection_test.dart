@@ -151,7 +151,9 @@ void main() {
         );
       }
 
-      // A single-node selection paints no overlay rects.
+      // A single-node, single-line selection paints exactly one overlay
+      // rect — the field's own `selectionColor` is transparent, so the
+      // overlay is the only thing drawing the highlight now.
       controller.changeSelection(
         DocumentSelection.collapsed(
           DocumentPosition('a', const TextNodePosition(0)),
@@ -169,7 +171,7 @@ void main() {
           .map((w) => w.painter)
           .whereType<SelectionOverlayPainter>()
           .single;
-      expect(singleNodePainter.rects, isEmpty);
+      expect(singleNodePainter.rects, hasLength(1));
     },
   );
 
