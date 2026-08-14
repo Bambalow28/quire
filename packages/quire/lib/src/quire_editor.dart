@@ -51,10 +51,17 @@ class SelectionOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (rects.isEmpty) return;
-    final paint = Paint()..color = color;
+    // One drawPath call for every rect, not one drawRect call per rect: two
+    // adjacent semi-transparent rects each get anti-aliased against the
+    // background independently, and compositing those separately-blended
+    // edges leaves a faint seam right where consecutive lines touch. Filling
+    // them as a single path rasterizes the shared edge once, as interior to
+    // one solid region, instead of twice.
+    final path = Path();
     for (final rect in rects) {
-      canvas.drawRect(rect, paint);
+      path.addRect(rect);
     }
+    canvas.drawPath(path, Paint()..color = color);
   }
 
   @override
