@@ -123,7 +123,7 @@ void main() {
 
   testWidgets(
     'a field selection landing mid-emoji (as a tap can, via raw hit-testing) '
-    'snaps to the nearer edge instead of splitting its surrogate pair',
+    'snaps forward, past the emoji, instead of splitting its surrogate pair',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -149,9 +149,13 @@ void main() {
       expect(
         controller.composer.selection,
         DocumentSelection.collapsed(
-          DocumentPosition('a', const TextNodePosition(3)),
+          DocumentPosition('a', const TextNodePosition(5)),
         ),
-        reason: 'field offset 5 (model 4, mid-emoji) snaps to the near edge',
+        reason:
+            'field offset 5 (model 4, mid-emoji) is how a real iOS field '
+            'reports "after the emoji" — even for a tap well past the end of '
+            'the line, which never reports the full-length offset 6 — so it '
+            'snaps forward, past the emoji, not back in front of it',
       );
 
       fieldController.selection = const TextSelection.collapsed(offset: 6);
@@ -163,6 +167,58 @@ void main() {
         ),
         reason: 'field offset 6 (model 5, also mid-emoji) snaps the other way',
       );
+    },
+  );
+
+  testWidgets(
+    'a soft-keyboard backspace after tapping past the end of a line that '
+    'ends in an emoji removes the emoji, not the space in front of it',
+    (tester) async {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'a',
+              text: AttributedText('hi 😀', [
+                const AttributionSpan(Attribution('largeEmoji'), 3, 5),
+              ]),
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: QuireEditor(controller: controller)),
+        ),
+      );
+      await tester.tap(find.byType(EditableText).first);
+      await tester.pumpAndSettle();
+
+      // What a real iOS field reports for a tap anywhere past the end of the
+      // line: field offset 5 — between the emoji's two surrogates — never the
+      // full-length 6.
+      tester
+              .widget<EditableText>(find.byType(EditableText).first)
+              .controller
+              .selection =
+          const TextSelection.collapsed(offset: 5);
+      await tester.pump();
+
+      // The soft keyboard deletes from ITS copy of the text, at ITS caret.
+      final platform = tester.testTextInput.editingState!;
+      final text = platform['text'] as String;
+      final caret = platform['selectionBase'] as int;
+      final deleted = text.substring(0, caret - 1) + text.substring(caret);
+      tester.testTextInput.updateEditingValue(
+        TextEditingValue(
+          text: deleted,
+          selection: TextSelection.collapsed(offset: caret - 1),
+        ),
+      );
+      await tester.pump();
+
+      final node = controller.document.getNodeById('a')! as TextNode;
+      expect(node.text.text, 'hi ');
     },
   );
 

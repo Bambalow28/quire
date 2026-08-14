@@ -1427,7 +1427,7 @@ class _QuireEditorState extends State<QuireEditor> {
       // visible jump.
       _ghostCaretPosition = position;
       _ghostCaretRect = null;
-      _scheduleGhostCaretMeasurement(position);
+      _scheduleGhostCaretMeasurement();
       return null;
     }
     final rect = _ghostCaretRect;
@@ -1447,14 +1447,31 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
-  void _scheduleGhostCaretMeasurement(DocumentPosition position) {
+  /// Whether a measurement is already queued for the next frame, so the
+  /// re-measure loop below can't stack up several per frame.
+  bool _ghostMeasurementScheduled = false;
+
+  void _scheduleGhostCaretMeasurement() {
+    if (_ghostMeasurementScheduled) return;
+    _ghostMeasurementScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ghostMeasurementScheduled = false;
       if (!mounted) return;
-      // The desired position may have moved on (another insert, real focus
-      // returning) since this was scheduled — only apply a measurement
-      // that's still for the position it's currently wanted at.
-      if (_ghostCaretPosition != position) return;
-      final rect = _caretRectAt(position);
+      // Measured against whatever position the ghost is wanted at *now*, not
+      // whatever it was when this was queued — the caret may have moved on
+      // (another insert) in between, and by this point in the frame the
+      // layout matches the new position anyway.
+      final current = _ghostCaretPosition;
+      if (current == null) return;
+      final rect = _caretRectAt(current);
+      // Keep measuring for as long as the ghost is showing. Its rect moves
+      // whenever the layout under it does — the keyboard finishing its slide
+      // out is the big one, which reflows the whole editor — and none of
+      // that rebuilds this widget, so a rect measured once stays put while
+      // the text it's supposed to sit in walks off without it. A post-frame
+      // callback never schedules a frame of its own, so this only costs
+      // anything on frames something else was already producing.
+      _scheduleGhostCaretMeasurement();
       if (rect == _ghostCaretRect) return;
       setState(() => _ghostCaretRect = rect);
     });
@@ -1616,6 +1633,12 @@ class _QuireEditorState extends State<QuireEditor> {
         } else {
           _handleFocusLost(node.id);
         }
+        // Losing/gaining real focus is what decides whether the ghost caret
+        // paints at all (see [_buildGhostCaret]), and nothing else rebuilds
+        // this widget for it — opening the +/emoji panel only drops focus,
+        // it doesn't touch the document — so without this the ghost simply
+        // never appeared until the first insert happened to rebuild.
+        if (mounted) setState(() {});
       });
       _focusNodes[node.id] = focusNode;
 
@@ -1961,8 +1984,8 @@ class _QuireEditorState extends State<QuireEditor> {
     );
   }
 
-  /// [offset] moved to the nearer edge of the grapheme cluster of [text] it
-  /// falls inside, or left alone if it's already on a cluster boundary.
+  /// [offset] moved to the END of the grapheme cluster of [text] it falls
+  /// inside, or left alone if it's already on a cluster boundary.
   ///
   /// A tap resolves to a raw code-unit offset via hit-testing on rendered
   /// glyph geometry, which isn't guaranteed to land on a cluster boundary —
@@ -1970,14 +1993,22 @@ class _QuireEditorState extends State<QuireEditor> {
   /// can report a caret position that sits *inside* it. Left unsnapped, a
   /// later backspace from there deletes half the emoji's code units instead
   /// of the whole character, and the emoji itself never goes away.
+  ///
+  /// Always forward, never to the nearer edge: a mid-cluster offset is how
+  /// the platform expresses "after this cluster" — measured on a real iOS
+  /// field, a tap anywhere past the end of "hi 😀" reports offset 5 (between
+  /// the emoji's two surrogates), never 6, while a tap that really means
+  /// "before the emoji" reports the cluster's own start offset exactly, so it
+  /// never reaches this at all. Snapping to the nearer edge therefore read
+  /// "past the emoji" as "before it": the caret landed left of the emoji and
+  /// the next backspace ate the space in front of it instead, leaving the
+  /// emoji sitting there as if backspace couldn't see it.
   int _snapToGraphemeBoundary(String text, int offset) {
     if (offset <= 0 || offset >= text.length) return offset;
     var start = 0;
     for (final grapheme in text.characters) {
       final end = start + grapheme.length;
-      if (offset > start && offset < end) {
-        return offset - start <= end - offset ? start : end;
-      }
+      if (offset > start && offset < end) return end;
       if (offset <= end) return offset;
       start = end;
     }
