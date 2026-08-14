@@ -2205,13 +2205,13 @@ class _QuireEditorState extends State<QuireEditor> {
     };
 
     final docSelection = widget.controller.composer.selection;
-    final isCrossNode =
-        docSelection != null &&
-        docSelection.base.nodeId != docSelection.extent.nodeId;
-    if (isCrossNode) {
-      // A field's own selection can't reach across nodes, so a bare
-      // Backspace/Delete here would otherwise fall through to EditableText
-      // deleting inside just this one node's (locally collapsed) caret.
+    if (docSelection != null && !docSelection.isCollapsed) {
+      // A drag-made selection is only ever written to `composer.selection`
+      // (see `_extendDocumentDragTo`) — the field's own local selection is
+      // never synced and stays wherever the caret was before the drag
+      // started, cross-node or not. A bare Backspace/Delete would otherwise
+      // fall through to EditableText deleting at that stale local caret
+      // instead of the real (drag-highlighted) selection.
       bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
           widget.controller.deleteSelection;
       bindings[const SingleActivator(LogicalKeyboardKey.delete)] =
@@ -2462,6 +2462,13 @@ class _QuireEditorState extends State<QuireEditor> {
           textCapitalization: TextCapitalization.sentences,
           cursorColor: widget.cursorColor ?? theme.colorScheme.primary,
           backgroundCursorColor: theme.colorScheme.surfaceContainerHighest,
+          // A drag-made selection only ever writes `composer.selection` (see
+          // `_extendDocumentDragTo`) — this field's own local selection never
+          // moves, so without this its blinking caret keeps sitting at its
+          // old (now meaningless) spot for the whole time a selection is
+          // highlighted.
+          showCursor:
+              widget.controller.composer.selection?.isCollapsed ?? true,
           // Transparent, not the highlight color: `SelectionOverlayPainter`
           // (via `_computeOverlayRects`) now paints every selection itself,
           // single-node or not, so it can stretch wrapped lines to the render
