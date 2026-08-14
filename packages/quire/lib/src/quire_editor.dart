@@ -1098,12 +1098,26 @@ class _QuireEditorState extends State<QuireEditor> {
   /// Rects (in this editor's own coordinate space) covering every node a
   /// selection spans, for [SelectionOverlayPainter] — empty for no selection
   /// or a collapsed one. Every wrapped line but the one holding the
-  /// selection's end is stretched to the render width, so both a selection
-  /// wrapped across several lines in one paragraph and one spanning several
-  /// paragraphs read as one continuous highlight instead of a row of boxes
-  /// stopping short at each line's last glyph (see the `selectionColor:
-  /// Colors.transparent` comment on the field — this is now the only thing
-  /// that paints a selection highlight, single-node or not).
+  /// selection's end is stretched to the render width, so a selection
+  /// wrapped across several lines in one paragraph reads as one continuous
+  /// highlight instead of a row of boxes stopping short at each line's last
+  /// glyph (see the `selectionColor: Colors.transparent` comment on the
+  /// field — this is now the only thing that paints a selection highlight,
+  /// single-node or not).
+  ///
+  /// Consecutive nodes are also stitched vertically: each one gets its own
+  /// `Padding(..., bottom: ...)` in `_buildTextNode` (tighter for list items,
+  /// wider between paragraphs) that sits entirely outside its
+  /// `RenderEditable`'s own box, so left alone the highlight would stop at
+  /// each node's glyphs and leave that padding as a visible unhighlighted
+  /// strip between items — most noticeable across list items, where the gap
+  /// is small enough to look like a stray hairline rather than obvious
+  /// spacing. The last rect of node `i` is extended down to the measured top
+  /// of node `i + 1` (with a hair of overlap so a sub-pixel rounding
+  /// difference between the two nodes' independent coordinate transforms
+  /// can't leave its own seam) whenever both are selected and adjacent in
+  /// the loop — i.e. not across a skipped non-text node, which keeps its own
+  /// gap as before.
   List<Rect> _computeOverlayRects() {
     final selection = widget.controller.composer.selection;
     if (selection == null || selection.isCollapsed) return const [];
@@ -1118,7 +1132,10 @@ class _QuireEditorState extends State<QuireEditor> {
         _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (editorBox == null || !editorBox.attached) return const [];
 
-    final rects = <Rect>[];
+    // One entry per selected TextNode, each holding that node's own rects in
+    // visual order — kept separate (rather than flattened immediately) so
+    // adjacent nodes' boundary rects can be stitched together below.
+    final perNode = <List<Rect>>[];
     for (var i = startIndex; i <= endIndex; i++) {
       final node = document.getNodeAt(i);
       if (node is! TextNode) continue;
@@ -1142,12 +1159,13 @@ class _QuireEditorState extends State<QuireEditor> {
       );
       // Every box but the one on the selection's very last visual line gets
       // stretched to the render width — that covers a node's own wrapped
-      // lines (i != endIndex, or i == endIndex with more than one box) as
-      // well as the gap between consecutive paragraphs. `getBoxesForSelection`
-      // returns boxes in visual order, so the last box is that last line.
+      // lines (i != endIndex, or i == endIndex with more than one box).
+      // `getBoxesForSelection` returns boxes in visual order, so the last
+      // box is that last line.
       final lastLineTop = (i == endIndex && boxes.isNotEmpty)
           ? boxes.last.top
           : null;
+      final nodeRects = <Rect>[];
       for (final box in boxes) {
         final stretchToEdge = lastLineTop == null || box.top < lastLineTop;
         final rect = stretchToEdge
@@ -1174,10 +1192,26 @@ class _QuireEditorState extends State<QuireEditor> {
             !bottomRight.dy.isFinite) {
           continue;
         }
-        rects.add(Rect.fromPoints(topLeft, bottomRight));
+        nodeRects.add(Rect.fromPoints(topLeft, bottomRight));
+      }
+      if (nodeRects.isNotEmpty) perNode.add(nodeRects);
+    }
+
+    const seamOverlap = 0.5;
+    for (var g = 0; g < perNode.length - 1; g++) {
+      final current = perNode[g];
+      final nextTop = perNode[g + 1].first.top;
+      final last = current.last;
+      if (nextTop > last.bottom) {
+        current[current.length - 1] = Rect.fromLTRB(
+          last.left,
+          last.top,
+          last.right,
+          nextTop + seamOverlap,
+        );
       }
     }
-    return rects;
+    return [for (final nodeRects in perNode) ...nodeRects];
   }
 
   // --- Multi-node selection drag handles ----------------------------------

@@ -175,6 +175,65 @@ void main() {
     },
   );
 
+  testWidgets(
+    'a selection spanning list items has no gap between the highlight rects',
+    (tester) async {
+      // Each list item is wrapped in its own bottom-padding for the visual
+      // gap between items — that padding sits outside the field's own
+      // RenderEditable box, so left alone the highlight would stop short of
+      // it and leave a visible unhighlighted strip between items.
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'a',
+              text: AttributedText('first item'),
+              metadata: {'blockType': 'listItemTask'},
+            ),
+            TextNode(
+              id: 'b',
+              text: AttributedText('second item'),
+              metadata: {'blockType': 'listItemTask'},
+            ),
+            TextNode(
+              id: 'c',
+              text: AttributedText('third item'),
+              metadata: {'blockType': 'listItemTask'},
+            ),
+          ],
+        ),
+      );
+      await _pumpEditor(tester, controller);
+
+      controller.changeSelection(
+        DocumentSelection(
+          base: DocumentPosition('a', const TextNodePosition(0)),
+          extent: DocumentPosition('c', const TextNodePosition(5)),
+        ),
+      );
+      await tester.pump();
+
+      final painter = tester
+          .widgetList<CustomPaint>(find.byType(CustomPaint))
+          .map((w) => w.painter)
+          .whereType<SelectionOverlayPainter>()
+          .single;
+      final rects = [...painter.rects]..sort((a, b) => a.top.compareTo(b.top));
+      expect(rects.length, greaterThanOrEqualTo(3));
+      for (var i = 0; i < rects.length - 1; i++) {
+        // Bridged, not just touching — a rect ending exactly where the next
+        // starts can still show a hairline seam from the two nodes' own
+        // independent coordinate transforms rounding a hair apart.
+        expect(
+          rects[i].bottom,
+          greaterThan(rects[i + 1].top),
+          reason: 'rect $i ends at ${rects[i].bottom} but rect ${i + 1} '
+              'starts at ${rects[i + 1].top} — leaves a gap',
+        );
+      }
+    },
+  );
+
   testWidgets('typing with a cross-node selection active leaves one node '
       'containing the typed text', (tester) async {
     final controller = QuireEditorController(
