@@ -1934,7 +1934,19 @@ class _QuireEditorState extends State<QuireEditor> {
       final docSelection = widget.controller.composer.selection;
       if (docSelection != null &&
           docSelection.base.nodeId != docSelection.extent.nodeId) {
-        widget.controller.replaceSelectionWithText(insertedText);
+        // Deferred to a microtask for the same reason as the merge-with-
+        // previous branch above: this field's own node can be one of the
+        // ones a cross-node delete removes (e.g. it's the selection's end
+        // node, merged into the start node) — disposing it synchronously
+        // here would tear down this very NodeTextController while it's
+        // still mid-notifyListeners (this callback IS that notification),
+        // silently dropping the edit until something else (undo) forces a
+        // clean resync.
+        final text = insertedText;
+        scheduleMicrotask(() {
+          if (!mounted) return;
+          widget.controller.replaceSelectionWithText(text);
+        });
         return;
       }
 
