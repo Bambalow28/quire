@@ -1885,6 +1885,23 @@ class _QuireEditorState extends State<QuireEditor> {
     // (select-all + delete) also drops the sentinel but changes the text,
     // so it falls through to the normal diff below instead.
     if (!rawNewText.startsWith(_emptyNodeSentinel) && rawNewText == oldText) {
+      final docSelection = widget.controller.composer.selection;
+      if (docSelection != null &&
+          !docSelection.isCollapsed &&
+          docSelection.base.nodeId != docSelection.extent.nodeId) {
+        // This field's local caret is stale for a cross-node selection (see
+        // `_pushModelToControllers`) and can land right after the sentinel
+        // by coincidence — e.g. a drag-select that started at the very
+        // beginning of this node's text. A soft-keyboard delete there reads
+        // as "backspace at start of paragraph" by the sentinel check above,
+        // but the real, visible selection spans other nodes too: deleting
+        // that selection is what the user actually did, not a merge.
+        scheduleMicrotask(() {
+          if (!mounted) return;
+          widget.controller.deleteSelection();
+        });
+        return;
+      }
       // Deferred to a microtask: merging synchronously here could delete
       // this very node's own NodeTextController while it's still
       // mid-notifyListeners (this callback IS that notification) —
