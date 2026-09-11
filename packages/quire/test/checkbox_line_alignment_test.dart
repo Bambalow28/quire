@@ -23,14 +23,20 @@ Future<void> _pumpEditor(
 /// `EditableText` — measured via `RenderEditable.getBoxesForSelection` (real
 /// layout), never derived from `fontSize`.
 (double top, double bottom) _firstLineExtent(WidgetTester tester) {
-  final state = tester.state<EditableTextState>(find.byType(EditableText).first);
-  final renderEditable = state.renderEditable;
-  // Selecting just the first two characters (leading sentinel + one glyph)
-  // stays within line 1 regardless of wrapping, and a TextBox's height for
-  // any run within one line equals that line's own box height.
-  final boxes = renderEditable.getBoxesForSelection(
-    const TextSelection(baseOffset: 0, extentOffset: 2),
+  final state = tester.state<EditableTextState>(
+    find.byType(EditableText).first,
   );
+  final renderEditable = state.renderEditable;
+  // Two characters starting just past the leading sentinel stay within line 1
+  // regardless of wrapping, and a TextBox's height for any run within one line
+  // equals that line's own box height. Skipping the sentinel matters: it is a
+  // hairline style run of its own, and measuring it here as well as in the
+  // editor would move this expectation in step with the bug it exists to
+  // catch.
+  final boxes = renderEditable
+      .getBoxesForSelection(const TextSelection(baseOffset: 1, extentOffset: 3))
+      .where((b) => b.bottom - b.top > 1)
+      .toList();
   final box = boxes.first;
   final topLeft = renderEditable.localToGlobal(Offset(box.left, box.top));
   final bottomLeft = renderEditable.localToGlobal(Offset(box.left, box.bottom));

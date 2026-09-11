@@ -927,7 +927,8 @@ class _QuireEditorState extends State<QuireEditor> {
         final state = _editableKeys[id]?.currentState;
         final docSelection = widget.controller.composer.selection;
         if (state != null && docSelection != null) {
-          final isCrossNode = docSelection.base.nodeId != docSelection.extent.nodeId;
+          final isCrossNode =
+              docSelection.base.nodeId != docSelection.extent.nodeId;
           if (isCrossNode) {
             // This field only holds ONE slice of a selection that spans
             // other nodes too — there's no local range here that's both
@@ -2259,8 +2260,10 @@ class _QuireEditorState extends State<QuireEditor> {
               : 0;
           if (node is TextNode &&
               widget.controller.isEmojiBefore(nodeId, modelOffset)) {
-            bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
-                () => widget.controller.deleteEmojiBefore(nodeId, modelOffset);
+            bindings[const SingleActivator(
+              LogicalKeyboardKey.backspace,
+            )] = () =>
+                widget.controller.deleteEmojiBefore(nodeId, modelOffset);
           }
         }
       }
@@ -2427,14 +2430,30 @@ class _QuireEditorState extends State<QuireEditor> {
         return;
       }
       // Any run of characters confined to line 1 reports that line's real
-      // box — one character (or just the sentinel, on an empty node) is
-      // enough and can never cross a wrap point.
-      final boxes = renderEditable.getBoxesForSelection(
-        TextSelection(baseOffset: 0, extentOffset: math.min(2, fieldLength)),
-      );
+      // box, and two characters can never cross a wrap point.
+      //
+      // The run starts *after* the leading sentinel (see
+      // [kEmptyNodeSentinel]): the sentinel is painted at a hairline font
+      // size, and it is its own style run, so on a real text engine it
+      // reports its own hairline-tall box. Taking that box put the checkbox
+      // a whole line's worth too low and grew the row with it. A node with
+      // nothing but the sentinel has no real text to measure and keeps the
+      // estimate below; degenerate boxes are dropped either way, so a change
+      // in how the engine splits runs can't quietly bring the bug back.
+      if (fieldLength < 2) return;
+      final boxes = renderEditable
+          .getBoxesForSelection(
+            TextSelection(
+              baseOffset: 1,
+              extentOffset: math.min(3, fieldLength),
+            ),
+          )
+          .where((b) => b.bottom - b.top > 1)
+          .toList();
       if (boxes.isEmpty) return;
-      final box = boxes.first;
-      final measured = (topOffset: box.top, height: box.bottom - box.top);
+      final top = boxes.map((b) => b.top).reduce(math.min);
+      final bottom = boxes.map((b) => b.bottom).reduce(math.max);
+      final measured = (topOffset: top, height: bottom - top);
       final cached = _checklistBoxes[nodeId];
       const epsilon = 0.05;
       if (cached != null &&
@@ -2497,8 +2516,7 @@ class _QuireEditorState extends State<QuireEditor> {
           // moves, so without this its blinking caret keeps sitting at its
           // old (now meaningless) spot for the whole time a selection is
           // highlighted.
-          showCursor:
-              widget.controller.composer.selection?.isCollapsed ?? true,
+          showCursor: widget.controller.composer.selection?.isCollapsed ?? true,
           // Transparent, not the highlight color: `SelectionOverlayPainter`
           // (via `_computeOverlayRects`) now paints every selection itself,
           // single-node or not, so it can stretch wrapped lines to the render
@@ -2555,8 +2573,7 @@ class _QuireEditorState extends State<QuireEditor> {
                       _showToolbarForWholeField(state);
                     },
                   )
-                else if (isCrossNode &&
-                    item.type == ContextMenuButtonType.copy)
+                else if (isCrossNode && item.type == ContextMenuButtonType.copy)
                   ContextMenuButtonItem(
                     label: item.label,
                     type: ContextMenuButtonType.copy,
@@ -2565,8 +2582,7 @@ class _QuireEditorState extends State<QuireEditor> {
                       widget.controller.copySelection();
                     },
                   )
-                else if (isCrossNode &&
-                    item.type == ContextMenuButtonType.cut)
+                else if (isCrossNode && item.type == ContextMenuButtonType.cut)
                   ContextMenuButtonItem(
                     label: item.label,
                     type: ContextMenuButtonType.cut,
