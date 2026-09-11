@@ -770,26 +770,14 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       );
       requests.add(DeleteSelectionRequest());
     }
-    var textToInsert = insertedText;
-    // Deterministic auto-capitalize: the platform's `textCapitalization`
-    // hint (see quire_editor.dart's EditableText) never fires for the first
-    // character of a node, because every field is prefixed with a
-    // zero-width sentinel (see `_emptyNodeSentinel`) — the character before
-    // the caret at offset 0 is the sentinel, not "start of text", which
-    // defeats iOS/Android's own auto-shift heuristic. Fix it here instead,
-    // at the single choke point every insert (soft keyboard, hardware
-    // keyboard, paste) routes through: if this text is landing at offset 0
-    // of a node that was empty before this edit, capitalize just its first
-    // character. Code blocks are exempt — auto-capitalizing code is wrong.
-    if (node is TextNode &&
-        start == 0 &&
-        node.text.text.isEmpty &&
-        node.blockType != 'code' &&
-        textToInsert.isNotEmpty) {
-      final first = textToInsert[0];
-      final upper = first.toUpperCase();
-      if (upper != first) textToInsert = upper + textToInsert.substring(1);
-    }
+    // No deterministic auto-capitalize here: the first letter of a paragraph
+    // is capitalized because the soft keyboard comes up shifted
+    // (`TextCapitalization.sentences`, now that the field's sentinel is a
+    // real space rather than a zero-width one — see [kEmptyNodeSentinel]),
+    // exactly like a plain TextField. Typing a deliberate lowercase first
+    // letter stays lowercase, which force-uppercasing the insert here made
+    // impossible.
+    final textToInsert = insertedText;
     if (textToInsert.isNotEmpty) {
       requests.add(
         InsertTextRequest(

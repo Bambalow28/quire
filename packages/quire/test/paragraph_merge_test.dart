@@ -99,10 +99,10 @@ void main() {
     await t.pumpAndSettle();
     await t.enterText(find.byType(EditableText).at(0), 'hello');
     await t.pumpAndSettle();
-    // Auto-capitalize turns the first letter of an empty node's first
-    // insertion uppercase (see quire_editor_controller.dart's replaceText).
-    expect((c.document.getNodeById('p')! as TextNode).text.text, 'Hello');
-    expect(c.document.toJson().toString().contains('​'), isFalse);
+    // Exact equality is the sentinel check: a leaked sentinel would show up
+    // as a leading space here. (A `contains` over the JSON can't do that job
+    // any more — the sentinel is an ordinary space now.)
+    expect((c.document.getNodeById('p')! as TextNode).text.text, 'hello');
   });
 
   testWidgets('select-all then delete empties the node, does not merge', (

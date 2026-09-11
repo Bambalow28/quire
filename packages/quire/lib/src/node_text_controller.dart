@@ -1,6 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:quire_core/quire_core.dart';
 
+/// The single leading character every node's field carries so that a soft
+/// keyboard always has something to delete at offset 0 — see
+/// `_fieldTextFor` in quire_editor.dart for why it exists at all.
+///
+/// It is a real space, not a zero-width space, on purpose: iOS/Android apply
+/// their `TextCapitalization.sentences` auto-shift by looking at the
+/// characters before the caret, and a zero-width space reads to them as a
+/// word character, which is what used to kill the keyboard's shift-on at the
+/// start of a paragraph. A leading space still reads as "start of sentence",
+/// so the keyboard shifts by itself and the user can unshift if they want
+/// lowercase — exactly how a plain TextField behaves. [NodeTextController]
+/// paints it at effectively zero width so it never shows up as an indent.
+const kEmptyNodeSentinel = ' ';
+
+/// Style that renders [kEmptyNodeSentinel] invisibly. The line keeps its
+/// full height regardless: EditableText forces its strut from the widget's
+/// own style, not from the spans.
+const _sentinelStyle = TextStyle(fontSize: 0.01, letterSpacing: 0);
+
 /// A [TextEditingController] for a single [TextNode]'s [AttributedText].
 ///
 /// Holds the node id and the current [AttributedText], and renders
@@ -27,15 +46,27 @@ class NodeTextController extends TextEditingController {
     TextStyle? style,
     required bool withComposing,
   }) {
+    // The field's text carries a leading sentinel the model doesn't have
+    // (see [kEmptyNodeSentinel]); it is painted, invisibly, as its own span
+    // so the built TextSpan's plain text still matches `value.text` exactly —
+    // EditableText requires that, and every offset past it would otherwise be
+    // one character out.
+    final sentinel = text.startsWith(kEmptyNodeSentinel)
+        ? const TextSpan(text: kEmptyNodeSentinel, style: _sentinelStyle)
+        : null;
+
     final spans = _attributedText.spans;
     if (spans.isEmpty || _attributedText.text.isEmpty) {
       // Render the field's own text (`text`, from the base
       // TextEditingController), not the model's — they can diverge by the
-      // empty-node zero-width-space sentinel the editor uses for
-      // soft-keyboard backspace (see quire_editor.dart), and EditableText
-      // requires the built TextSpan's plain text to match `value.text`
-      // exactly.
-      return TextSpan(style: style, text: text);
+      // sentinel.
+      final body = sentinel == null
+          ? text
+          : text.substring(kEmptyNodeSentinel.length);
+      return TextSpan(
+        style: style,
+        children: [if (sentinel != null) sentinel, TextSpan(text: body)],
+      );
     }
 
     // Collect every span boundary as a cut point, so each run between two
@@ -47,7 +78,7 @@ class NodeTextController extends TextEditingController {
     }
     final sortedCuts = cutPoints.toList()..sort();
 
-    final children = <TextSpan>[];
+    final children = <TextSpan>[if (sentinel != null) sentinel];
     for (var i = 0; i < sortedCuts.length - 1; i++) {
       final start = sortedCuts[i];
       final end = sortedCuts[i + 1];

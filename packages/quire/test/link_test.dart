@@ -121,9 +121,7 @@ void main() {
 
     expect(find.text('Link'), findsNothing);
     final node = controller.document.getNodeById('a')! as TextNode;
-    // Auto-capitalize turns the first letter of the (previously empty)
-    // node uppercase — unrelated to link detection, just along for the ride.
-    expect(node.text.text, 'Just some words, not a url');
+    expect(node.text.text, 'just some words, not a url');
   });
 
   testWidgets('tapping link text opens it instead of placing the caret there', (

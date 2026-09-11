@@ -147,10 +147,7 @@ void main() {
       await controller.pasteClipboard();
 
       final pasted = controller.document.getNodeById('b')! as TextNode;
-      // Auto-capitalize turns the first letter of an empty node's first
-      // insertion uppercase (see quire_editor_controller.dart's replaceText),
-      // pasting included.
-      expect(pasted.text.text, 'From another app');
+      expect(pasted.text.text, 'from another app');
       expect(pasted.text.spans, isEmpty);
     },
   );

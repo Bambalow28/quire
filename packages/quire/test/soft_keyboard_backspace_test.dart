@@ -135,16 +135,16 @@ void main() {
 
       // The field carries the sentinel + typed text, exactly what a soft
       // keyboard would report after typing "hi" at the caret.
-      await tester.enterText(find.byType(EditableText).first, '​hi');
+      await tester.enterText(
+        find.byType(EditableText).first,
+        '${kEmptyNodeSentinel}hi',
+      );
       await tester.pump();
 
+      // Exact equality is the sentinel check: a leaked sentinel would show
+      // up as a leading space here.
       final node = controller.document.getNodeById('a') as TextNode;
-      // Auto-capitalize turns the first letter of an empty node's first
-      // insertion uppercase (see quire_editor_controller.dart's replaceText).
-      expect(node.text.text, 'Hi');
-      expect(node.text.text.contains('​'), isFalse);
-      final json = controller.document.toJson().toString();
-      expect(json.contains('​'), isFalse);
+      expect(node.text.text, 'hi');
     },
   );
 
@@ -158,8 +158,6 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    final json = controller.document.toJson().toString();
-    expect(json.contains('​'), isFalse);
     expect(
       (controller.document.getNodeById('a') as TextNode).text.text,
       isEmpty,

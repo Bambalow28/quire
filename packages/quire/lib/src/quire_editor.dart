@@ -99,15 +99,16 @@ class QuireEditor extends StatefulWidget {
 // ponytail: soft-keyboard backspace sentinel. An iOS/Android soft keyboard
 // sends no deletion delta (and no key event) when the field it's editing is
 // already empty, so backspace-at-start-of-empty-paragraph is otherwise
-// unreachable on touch. Fix: when a text node's model is empty, the field
-// shows a single zero-width space (caret after it) instead of literally
-// nothing, so a soft-keyboard backspace has something to delete and a real
+// unreachable on touch. Fix: every text node's field carries one leading
+// sentinel character (caret after it) instead of starting literally empty,
+// so a soft-keyboard backspace always has something to delete and a real
 // delta to observe. The sentinel is a field-level trick only — it is
-// stripped before ever touching the model (`_stripSentinel`) and the model
-// never sees or persists it. Real fix: an editor-level `DeltaTextInputClient`
-// that sees the IME's actual delete requests instead of relying on text
-// diffs (see the physical-key-binding comment below for the same tradeoff).
-const _emptyNodeSentinel = '​';
+// stripped before ever touching the model (`_stripSentinel`), rendered at
+// effectively zero width (see [kEmptyNodeSentinel]), and never persisted.
+// Real fix: an editor-level `DeltaTextInputClient` that sees the IME's
+// actual delete requests instead of relying on text diffs (see the
+// physical-key-binding comment below for the same tradeoff).
+const _emptyNodeSentinel = kEmptyNodeSentinel;
 
 class _QuireEditorState extends State<QuireEditor> {
   final Map<String, NodeTextController> _controllers = {};
@@ -1778,8 +1779,8 @@ class _QuireEditorState extends State<QuireEditor> {
     _syncing = false;
   }
 
-  /// The text a node's field shows: a single leading zero-width-space
-  /// sentinel followed by the model text. Present on EVERY node (not just
+  /// The text a node's field shows: a single leading sentinel character
+  /// (see [kEmptyNodeSentinel]) followed by the model text. Present on EVERY node (not just
   /// empty ones), so the start of any paragraph has a character a soft
   /// keyboard can delete — that deletion is the only signal a soft keyboard
   /// gives for "backspace at the very start", which is what merges a
