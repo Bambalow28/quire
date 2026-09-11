@@ -93,6 +93,15 @@ class EditHistory implements EditListener {
   }
 
   void _record(List<EditRequest> requests) {
+    // Selection-only requests (drag-to-select, tap-to-place-caret, arrow-key
+    // movement) aren't document edits and were never meant to be undoable —
+    // but every call still ran through here, which pushed a full document
+    // JSON snapshot (`_snapshot()`) onto the undo stack on every single one.
+    // A drag-to-select fires a `ChangeSelectionRequest` on every pointer
+    // move, so that was a full-document serialization per pixel of finger
+    // movement — the actual cause of the gesture feeling laggy and twitchy.
+    if (requests.every((r) => r is ChangeSelectionRequest)) return;
+
     final key = _singleCharInsertKey(requests);
     final continuesStreak =
         key != null &&
