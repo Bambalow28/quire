@@ -110,6 +110,25 @@ class QuireEditor extends StatefulWidget {
 // physical-key-binding comment below for the same tradeoff).
 const _emptyNodeSentinel = kEmptyNodeSentinel;
 
+/// The side of the mark Flutter's [Checkbox] paints, before scaling. It is
+/// fixed — the widget ignores the box it is given — so it is the number every
+/// checklist-alignment sum is built from.
+const kCheckboxMarkSize = 18.0;
+
+/// How far down that mark is scaled to sit next to body text without
+/// out-weighing it. Paint-time, so the box it centres in is unaffected.
+const kCheckboxMarkScale = 0.8;
+
+/// A Latin UI face's cap height as a share of its ascent — roughly three
+/// quarters of it, the ascent's remainder being the room a font keeps above
+/// capitals for accents.
+///
+/// It is a ratio rather than a measurement because Flutter exposes a line's
+/// ascent and never its cap height, and it is a ratio of the *measured*
+/// ascent rather than of `fontSize` so it scales with whatever font the host
+/// app hands the editor, the way everything else in this alignment does.
+const kCapHeightOfAscent = 0.75;
+
 class _QuireEditorState extends State<QuireEditor> {
   final Map<String, NodeTextController> _controllers = {};
   final Map<String, FocusNode> _focusNodes = {};
@@ -2993,14 +3012,36 @@ class _QuireEditorState extends State<QuireEditor> {
   /// rather than derived from `fontSize`, because the real line box comes
   /// from the font's metrics — and the font here is the host app's, not ours.
   double _lineHeight(BuildContext context, TextNode node) {
-    final painter = TextPainter(
-      text: TextSpan(text: 'x', style: _styleFor(Theme.of(context), node)),
-      textDirection: Directionality.of(context),
-    )..layout();
+    final painter = _linePainter(context, node);
     final height = painter.height;
     painter.dispose();
     return height;
   }
+
+  /// Where [node]'s alphabetic baseline falls inside its own line box, as a
+  /// fraction of that box's height — the font's ascent over its full line,
+  /// measured, never guessed.
+  ///
+  /// A fraction rather than the raw distance because the number it gets
+  /// applied to is the *real* first line, measured off the render object,
+  /// and that line is not always as tall as a lone synthetic one: at a
+  /// `lineSpacing` above 1 the engine splits the extra leading differently
+  /// for a wrapped item than for a one-line one. The split is proportional
+  /// either way, so the fraction holds where an absolute distance doesn't.
+  double _baselineFraction(BuildContext context, TextNode node) {
+    final painter = _linePainter(context, node);
+    final fraction =
+        painter.computeDistanceToActualBaseline(TextBaseline.alphabetic) /
+        painter.height;
+    painter.dispose();
+    return fraction;
+  }
+
+  /// One laid-out line of [node]'s own text. Callers dispose it.
+  TextPainter _linePainter(BuildContext context, TextNode node) => TextPainter(
+    text: TextSpan(text: 'x', style: _styleFor(Theme.of(context), node)),
+    textDirection: Directionality.of(context),
+  )..layout();
 
   /// The bullet/number sits beside its own `EditableText`, so it has to carry
   /// the node's text style itself — otherwise it renders at the default size
@@ -3018,20 +3059,28 @@ class _QuireEditorState extends State<QuireEditor> {
       final measured = _checklistBoxes[node.id];
       final topOffset = measured?.topOffset ?? 0.0;
       final height = measured?.height ?? _lineHeight(context, node);
-      // Geometric centering on the line's own box reads as slightly low: an
-      // outlined square's visual weight sits toward its lower half (the
-      // stroke closes the shape there), so the eye expects it a touch above
-      // true center. This is the standard optical correction for boxy glyphs
-      // next to text — not a fontSize guess, hence exempt from "measure the
-      // line, never guess" (see [_scheduleChecklistBoxMeasurement]). Done as
-      // a paint-time translate, not folded into the padding above, because
-      // `Padding` rejects a negative inset and this can't go negative.
-      const opticalNudge = 1.5;
+      // Centred on the text's cap-height band — baseline up to the top of a
+      // capital — not on its line box. The line box is ascent + descent, and
+      // a font's ascent runs well above any letter it actually draws (it has
+      // to clear accents nothing here types) while its descent hangs below
+      // the baseline, so the box's own centre sits noticeably above the
+      // letters, which is exactly the "checkbox rides high" this is fixing.
+      // The band is where the reader sees text, so that is what the mark
+      // centres on.
+      //
+      // Both ends of the band come from measurement: the line box off the
+      // real render object, the baseline's place inside it off the node's own
+      // font. `boxHeight` is in the sum only because Checkbox centres its
+      // mark in whatever box it is given, so the box's centre is the thing
+      // that has to move.
+      final boxHeight = math.max(height, kCheckboxMarkSize);
+      final ascent = height * _baselineFraction(context, node);
+      final markCentreInLine = ascent - (ascent * kCapHeightOfAscent) / 2;
       return Padding(
         padding: EdgeInsets.only(top: topOffset, right: 4),
         // Sized to exactly one line of this node's own text, so the checkbox
-        // centres on the *first* line: the row is top-aligned, so a taller
-        // box would push the mark down past a one-line item's text, and on a
+        // rides the *first* line: the row is top-aligned, so a taller box
+        // would push the mark down past a one-line item's text, and on a
         // wrapped item an unconstrained checkbox centres itself against the
         // whole paragraph instead of the line it belongs to.
         //
@@ -3040,14 +3089,18 @@ class _QuireEditorState extends State<QuireEditor> {
         // keeps that mark from clipping at very small text sizes.
         child: SizedBox(
           width: 24,
-          height: math.max(height, 18),
-          // Scaled rather than resized: Checkbox paints a fixed 18pt mark, so
-          // this is the only way to shrink it — and because a transform is
-          // paint-time, the box it centres in is untouched.
+          height: boxHeight,
+          // Done as a paint-time translate rather than folded into the
+          // padding above, because the offset goes negative whenever the
+          // line's descent is deeper than half the mark, and `Padding`
+          // rejects a negative inset.
           child: Transform.translate(
-            offset: const Offset(0, -opticalNudge),
+            offset: Offset(0, markCentreInLine - boxHeight / 2),
+            // Scaled rather than resized: Checkbox paints a fixed 18pt mark,
+            // so this is the only way to shrink it — and because a transform
+            // is paint-time, the box it centres in is untouched.
             child: Transform.scale(
-              scale: 0.8,
+              scale: kCheckboxMarkScale,
               // Keeps the checkbox out of the focus tree so tapping it can't
               // pull focus (and the keyboard) off the node's text field. This
               // used to be a `FocusNode(canRequestFocus: false)` built inline,

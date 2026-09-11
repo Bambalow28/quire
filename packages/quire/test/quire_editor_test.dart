@@ -462,55 +462,8 @@ void main() {
     },
   );
 
-  // The fussy one. On an item that wraps, the checkbox must sit beside the
-  // FIRST line — not centred against the whole paragraph — and its mark
-  // must be centred on that line rather than hung from its top.
-  testWidgets('the checkbox centres on the first line of a wrapped item', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: SizedBox(
-            width: 200,
-            child: QuireEditor(
-              controller: QuireEditorController(
-                document: MutableDocument(
-                  nodes: [
-                    TextNode(
-                      id: 'a',
-                      text: AttributedText(
-                        'a checklist item long enough to wrap onto '
-                        'several separate lines in a narrow column',
-                      ),
-                      metadata: const {'blockType': 'listItemTask'},
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    final box = tester.getRect(find.byType(Checkbox));
-    final field = tester.getRect(find.byType(EditableText));
-    // Actually wrapping is the whole premise of this test.
-    expect(field.height, greaterThan(box.height * 2));
-
-    final renderEditable = tester.renderObject<RenderBox>(
-      find.byType(EditableText),
-    );
-    final lineHeight = renderEditable.getMaxIntrinsicHeight(double.infinity);
-    final firstLineCentre = field.top + lineHeight / 2;
-
-    expect(
-      box.center.dy,
-      closeTo(firstLineCentre, 1.5),
-      reason:
-          'checkbox centre ${box.center.dy} vs first line '
-          'centre $firstLineCentre',
-    );
-  });
+  // The fussy one — where the checkbox sits against a wrapped item's first
+  // line — lives in `checkbox_line_alignment_test.dart`, which measures it
+  // off real layout at several line spacings. A second, looser copy of that
+  // rule here only ever drifted from it.
 }
