@@ -37,6 +37,20 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   String? _focusedNodeId;
   String? get focusedNodeId => _focusedNodeId;
 
+  /// True after the toolbar's explicit "hide keyboard" button — suppresses
+  /// the dimmed ghost caret (see quire_editor's `_buildGhostCaret`) so
+  /// dismissing the keyboard also clears the caret visually instead of
+  /// leaving a faint bar with no keyboard left to justify it. Cleared the
+  /// moment real focus returns to a node, or the +/emoji panel opens (which
+  /// still wants the ghost to mark where an insert will land).
+  bool _hideGhostCaret = false;
+  bool get hideGhostCaret => _hideGhostCaret;
+  set hideGhostCaret(bool value) {
+    if (_hideGhostCaret == value) return;
+    _hideGhostCaret = value;
+    notifyListeners();
+  }
+
   int _focusRequest = 0;
 
   /// Bumped by [requestFocus]. The editor watches this rather than

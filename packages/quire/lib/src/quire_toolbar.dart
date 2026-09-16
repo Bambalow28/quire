@@ -163,6 +163,10 @@ class _QuireToolbarState extends State<QuireToolbar>
       _keyboardLeaving = true;
       _closingPanel = false;
     });
+    // The panel still wants the ghost caret to mark where an insert will
+    // land, even if the keyboard was hidden (and the ghost suppressed) just
+    // before this was tapped.
+    widget.controller.hideGhostCaret = false;
     // Drop focus so the keyboard leaves and the panel takes its place. The
     // composer's selection survives, so the panel's actions still apply where
     // the caret was.
@@ -307,6 +311,12 @@ class _QuireToolbarState extends State<QuireToolbar>
                                 _closingPanel = false;
                               });
                             }
+                            // The selection itself is left alone (so tapping
+                            // back in resumes where it was) but the dimmed
+                            // ghost caret this would otherwise leave behind
+                            // — a faint bar with no keyboard to justify it —
+                            // is suppressed until real focus returns.
+                            widget.controller.hideGhostCaret = true;
                             FocusManager.instance.primaryFocus?.unfocus();
                           },
                         ),

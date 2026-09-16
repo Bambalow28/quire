@@ -1473,6 +1473,10 @@ class _QuireEditorState extends State<QuireEditor> {
   /// Left `null` (nothing painted) the moment real focus returns, so it
   /// never doubles up with the native cursor.
   Widget? _buildGhostCaret(BuildContext context) {
+    if (widget.controller.hideGhostCaret) {
+      _ghostCaretPosition = null;
+      return null;
+    }
     final selection = widget.controller.composer.selection;
     if (selection == null || !selection.isCollapsed) {
       _ghostCaretPosition = null;
@@ -1699,6 +1703,7 @@ class _QuireEditorState extends State<QuireEditor> {
       focusNode.addListener(() {
         if (focusNode.hasFocus) {
           widget.controller.focusNode(node.id);
+          widget.controller.hideGhostCaret = false;
         } else {
           _handleFocusLost(node.id);
         }
