@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/rendering.dart' show RenderParagraph;
@@ -197,6 +198,7 @@ class _QuireEditorState extends State<QuireEditor>
     widget.controller.addListener(_onModelChanged);
     _editorFocusNode.addListener(_onEditorFocusChanged);
     _scrollController.addListener(() {
+      _hideContextMenu();
       if (_hasVisibleSelectionHandles) setState(() {});
     });
     _syncAndPush();
@@ -239,6 +241,7 @@ class _QuireEditorState extends State<QuireEditor>
     } else {
       _handleFocusLost();
       _inputClient.detach();
+      _hideContextMenu();
     }
     _resetCaretBlink();
     if (mounted) setState(() {});
@@ -259,6 +262,10 @@ class _QuireEditorState extends State<QuireEditor>
   /// Runs before `setState` so no controller/model listener ever fires
   /// mid-build.
   void _onModelChanged() {
+    // Hide on typing (and on any other model change — a toolbar action, an
+    // undo) the same way a native selection toolbar disappears the moment
+    // its selection stops meaning what it showed.
+    _hideContextMenu();
     _syncAndPush();
     setState(() {});
   }
@@ -1527,13 +1534,28 @@ class _QuireEditorState extends State<QuireEditor>
           _moveCaretVertically(nodeId, down: true, extend: true),
     };
 
+    // Physical Backspace/Delete are only bound on desktop. On iOS/Android, a
+    // hardware-keyboard Backspace while a text input connection is focused
+    // never reaches this handler at all — the OS's own text-input system
+    // consumes it and reports it to us as a deletion delta instead (same as
+    // a soft-keyboard backspace; see `document_input_client.dart`'s
+    // `_applyDeletion`). Binding it here too would double-delete on exactly
+    // that path. Desktop key events, by contrast, are NOT guaranteed to
+    // reach the input connection the same way, so they need a binding of
+    // their own — this mirrors `performSelector`'s own 'deleteBackward:'
+    // comment (that mapping is deliberately left unbound, for the same
+    // double-fire reason, on the platforms where it could ever race this).
+    final isDesktop = switch (defaultTargetPlatform) {
+      TargetPlatform.macOS || TargetPlatform.windows || TargetPlatform.linux => true,
+      TargetPlatform.iOS || TargetPlatform.android || TargetPlatform.fuchsia => false,
+    };
     final docSelection = widget.controller.composer.selection;
-    if (docSelection != null && !docSelection.isCollapsed) {
+    if (isDesktop && docSelection != null && !docSelection.isCollapsed) {
       bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
           widget.controller.deleteSelection;
       bindings[const SingleActivator(LogicalKeyboardKey.delete)] =
           widget.controller.deleteSelection;
-    } else if (docSelection != null && docSelection.isCollapsed) {
+    } else if (isDesktop && docSelection != null && docSelection.isCollapsed) {
       final offset = (docSelection.extent.nodePosition as TextNodePosition?)?.offset;
       if (offset == 0) {
         bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>

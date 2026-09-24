@@ -460,15 +460,20 @@ class DocumentInputClient implements DeltaTextInputClient {
   void removeTextPlaceholder() {}
 
   /// macOS selector dispatch (e.g. from a trackpad/menu-driven edit
-  /// command). Only the trivial, unambiguous ones are worth mapping — the
-  /// hardware-keyboard equivalents already reach the model through
-  /// `_shortcutBindings` in `quire_editor.dart`, and every selector maps to
-  /// one of those same operations.
+  /// command, or a hardware key macOS's own text-input system intercepts
+  /// before it ever reaches `Focus.onKeyEvent`). `'deleteBackward:'` is
+  /// deliberately left unmapped here even though it would be trivial: macOS
+  /// hardware Backspace is *also* bound physically (see
+  /// `quire_editor.dart`'s `_shortcutBindings`, `isDesktop` branch) for the
+  /// platforms/configurations where it never reaches this selector path at
+  /// all — mapping it in both places risks deleting twice for the same
+  /// keystroke on whichever configuration delivers both, and there is no
+  /// reliable signal here to tell them apart. `'insertNewline:'` has no such
+  /// conflict (the physical Enter binding and this both do the same,
+  /// idempotent-by-selection thing), so it's mapped.
   @override
   void performSelector(String selectorName) {
     switch (selectorName) {
-      case 'deleteBackward:':
-        host.controller.backspaceAtCaret();
       case 'insertNewline:':
         host.insertNewline();
       default:
