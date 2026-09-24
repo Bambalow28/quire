@@ -16,6 +16,8 @@ dependencies:
     sdk: flutter
   quire_core:
     path: ../quire_core
+  quire_markdown:
+    path: ../quire_markdown
   url_launcher: ^6.3.2
 
 dev_dependencies:

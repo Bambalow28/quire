@@ -1,12 +1,34 @@
+import 'dart:async';
+
 import 'package:characters/characters.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:quire_core/quire_core.dart';
+import 'package:quire_markdown/quire_markdown.dart';
 
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
 const _underlineAttribution = Attribution('underline');
 const _strikethroughAttribution = Attribution('strikethrough');
+
+// Markdown block shortcuts typed at the start of a paragraph.
+//
+// Anchored on both ends so a prefix only matches when it's *everything*
+// typed on the line so far — never mid-text.
+final _mdUnordered = RegExp(r'^[-*]$');
+final _mdOrdered = RegExp(r'^\d+\.$');
+final _mdTaskChecked = RegExp(r'^(?:-\s)?\[[xX]\]$');
+final _mdTaskUnchecked = RegExp(r'^(?:-\s)?\[\s?\]$');
+final _mdHeader = RegExp(r'^#{1,6}$');
+final _mdBlockquote = RegExp(r'^>$');
+final _mdCode = RegExp(r'^```$');
+
+// Auto-linking a typed URL.
+//
+// Trailing punctuation that reads as sentence punctuation rather than part
+// of the address, stripped off the token before linking it.
+final _urlTrailingPunct = RegExp(r'''[.,;:!?)"']+$''');
+final _whitespace = RegExp(r'\s');
 
 /// A single find match: the range `[start, end)` of a query hit within one
 /// [TextNode]'s text.
@@ -88,8 +110,13 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   @override
   void onEdit(List<EditEvent> events) => notifyListeners();
 
+  // Guards the scheduleMicrotask callbacks in [replaceText] (markdown/
+  // auto-link shortcuts) against running after this controller is gone.
+  bool _disposed = false;
+
   @override
   void dispose() {
+    _disposed = true;
     editor.removeListener(this);
     super.dispose();
   }
@@ -365,6 +392,15 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   // --- Requests used by the editor widget's node syncing -------------------
 
   void insertNewline() {
+    // A bare URL followed by Enter gets auto-linked, same as by a space
+    // (see [replaceText]). Its own undo step, before the newline's.
+    final selection = composer.selection;
+    final nodePosition = selection?.extent.nodePosition;
+    if (selection != null &&
+        selection.isCollapsed &&
+        nodePosition is TextNodePosition) {
+      _maybeAutoLinkUrlBefore(selection.extent.nodeId, nodePosition.offset);
+    }
     history.execute([InsertNewlineRequest()]);
     final id = composer.selection?.extent.nodeId;
     if (id != null) requestFocus(id);
@@ -800,6 +836,143 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       );
     }
     if (requests.isNotEmpty) history.execute(requests);
+
+    // A completed "- "/"1. "/"# "/etc. prefix converts the
+    // block, and a bare URL followed by a space gets auto-linked. Only a
+    // pure single-space insert (nothing was deleted) can complete either —
+    // deferred a microtask because this can run from inside the field's own
+    // NodeTextController.notifyListeners (see quire_editor.dart's
+    // `_onControllerChanged`), and both shortcuts restructure the document
+    // (block-type change, node replacement) in ways that field's other
+    // branches already defer for the same reentrancy reason. Each shortcut
+    // is its own undo step, recorded here strictly after the literal
+    // space's step above, so one Undo always restores the literal text.
+    if (start == end && insertedText == ' ') {
+      scheduleMicrotask(() {
+        if (_disposed) return;
+        if (!_maybeApplyMarkdownShortcut(nodeId, start)) {
+          _maybeAutoLinkUrlBefore(nodeId, start);
+        }
+      });
+    }
+  }
+
+  /// Converts the paragraph at [nodeId] to
+  /// the block type implied by a markdown prefix that's just been completed
+  /// by a typed space — "- " -> bullet list, "1. " -> numbered list, "# " ->
+  /// heading, etc. [start] is the offset the space was inserted at, so
+  /// `text[0, start)` is the candidate prefix (text after it, if any, is
+  /// preserved). Returns whether a conversion happened.
+  bool _maybeApplyMarkdownShortcut(String nodeId, int start) {
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode || node.blockType != 'paragraph') return false;
+    if (isInsideTable(nodeId)) return false;
+    if (start > node.text.text.length) return false;
+    final prefix = node.text.text.substring(0, start);
+
+    // The whole node — not just the prefix before the caret — must be
+    // "---": nothing may follow the trigger space either. iOS smart dashes
+    // turn "--" into an em dash as it's typed, so "—-" and "—" count too.
+    // Space only, not Enter: Enter also runs inside multi-line paste, where
+    // a "---" line is followed by more text in the same node.
+    if (const {'---', '—-', '—'}.contains(prefix) &&
+        node.text.text.length == start + 1) {
+      _convertToHorizontalRule(nodeId);
+      return true;
+    }
+
+    String blockType;
+    var checked = false;
+    if (_mdUnordered.hasMatch(prefix)) {
+      blockType = 'listItemUnordered';
+    } else if (_mdOrdered.hasMatch(prefix)) {
+      blockType = 'listItemOrdered';
+    } else if (_mdTaskChecked.hasMatch(prefix)) {
+      blockType = 'listItemTask';
+      checked = true;
+    } else if (_mdTaskUnchecked.hasMatch(prefix)) {
+      blockType = 'listItemTask';
+    } else if (_mdHeader.hasMatch(prefix)) {
+      blockType = 'header${prefix.length}';
+    } else if (_mdBlockquote.hasMatch(prefix)) {
+      blockType = 'blockquote';
+    } else if (_mdCode.hasMatch(prefix)) {
+      blockType = 'code';
+    } else {
+      return false;
+    }
+
+    // One undo step for "strip the prefix + convert the block (+ check the
+    // task)" — separate from the literal typing's own step recorded above.
+    history.transaction(() {
+      replaceText(nodeId: nodeId, start: 0, end: start + 1, insertedText: '');
+      applyBlockType(blockType);
+      if (checked) history.execute([ToggleTaskCheckedRequest(nodeId)]);
+    });
+    return true;
+  }
+
+  /// Replaces the paragraph at [nodeId] — whose
+  /// entire text is exactly "---" — with a [HorizontalRuleNode].
+  /// [InsertNodeRequest] already parks the caret in a trailing paragraph
+  /// (adding one if needed), the same way [insertImage] relies on it.
+  void _convertToHorizontalRule(String nodeId) {
+    history.execute([
+      InsertNodeRequest(
+        HorizontalRuleNode(id: generateNodeId()),
+        afterNodeId: nodeId,
+      ),
+      DeleteNodeRequest(nodeId),
+    ]);
+  }
+
+  /// Auto-links a bare URL token (http://, https://, www.) once
+  /// it's followed by a space — the run of non-whitespace characters ending
+  /// at [caretOffset], minus trailing sentence punctuation. Its own undo
+  /// step. Skips code blocks and tokens that are already linked.
+  void _maybeAutoLinkUrlBefore(String nodeId, int caretOffset) {
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode || node.blockType == 'code') return;
+    final text = node.text.text;
+    if (caretOffset <= 0 || caretOffset > text.length) return;
+
+    var tokenStart = caretOffset;
+    while (tokenStart > 0 && !_whitespace.hasMatch(text[tokenStart - 1])) {
+      tokenStart--;
+    }
+    var token = text.substring(tokenStart, caretOffset);
+    final trailing = _urlTrailingPunct.firstMatch(token);
+    var tokenEnd = caretOffset;
+    if (trailing != null) {
+      tokenEnd -= trailing.group(0)!.length;
+      token = token.substring(0, trailing.start);
+    }
+    if (token.isEmpty) return;
+    final isUrl =
+        token.startsWith('http://') ||
+        token.startsWith('https://') ||
+        token.startsWith('www.');
+    if (!isUrl) return;
+    if (node.text.attributionsAt(tokenStart).any((a) => a.name == 'link')) {
+      return;
+    }
+
+    final url = token.startsWith('www.') ? 'https://$token' : token;
+    final caretPosition = composer.selection?.extent;
+    history.transaction(() {
+      changeSelection(
+        DocumentSelection(
+          base: DocumentPosition(nodeId, TextNodePosition(tokenStart)),
+          extent: DocumentPosition(nodeId, TextNodePosition(tokenEnd)),
+        ),
+      );
+      history.execute([
+        ToggleAttributionRequest(Attribution('link', value: {'url': url})),
+      ]);
+      if (caretPosition != null) {
+        changeSelection(DocumentSelection.collapsed(caretPosition));
+      }
+    });
   }
 
   // --- Cross-node selection operations -------------------------------
@@ -856,12 +1029,41 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       replaceSelectionWithNodes(richNodes);
       return;
     }
+    // Text pasted from outside the app carries no rich nodes —
+    // if it looks like Markdown, convert it instead of pasting it literally.
+    // Non-TextNode results (e.g. a "---" rule) are dropped:
+    // InsertRichContentRequest only knows how to splice TextNodes.
+    if (_looksLikeMarkdown(text)) {
+      final nodes = markdownToQuireOrNull(
+        text,
+      )?.nodes.whereType<TextNode>().toList();
+      if (nodes != null && nodes.isNotEmpty) {
+        replaceSelectionWithNodes(nodes);
+        return;
+      }
+    }
     // ponytail: the OS clipboard only round-trips plain text without a
     // plugin, so content copied outside Quire (or since overwritten
     // elsewhere) pastes unformatted. Ceiling: a clipboard plugin (e.g.
     // super_clipboard) for cross-app text/html round-trip.
     replaceSelectionWithText(text);
   }
+
+  /// Whether [text] is plausibly Markdown rather than plain prose: at least
+  /// one line opens with a block marker (heading/bullet/ordered/task/
+  /// blockquote/fence), or the text contains inline markup (`**bold**`,
+  /// `` `code` ``, `[text](http...)`). Deliberately looser than
+  /// [markdownToQuire]'s own parsing — this only decides which paste path
+  /// to take, not how to parse it.
+  static final _mdBlockLine = RegExp(
+    r'^ {0,3}(#{1,6}\s|[-*]\s|\d+\.\s|\[[ xX]\]\s|>|`{3})',
+    multiLine: true,
+  );
+  static final _mdInlineMarkup = RegExp(
+    r'\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\(https?://[^)\n]+\)',
+  );
+  bool _looksLikeMarkdown(String text) =>
+      _mdBlockLine.hasMatch(text) || _mdInlineMarkup.hasMatch(text);
 
   /// Rich-paste counterpart to [replaceSelectionWithText]: replaces the
   /// current selection with [nodes] (clipped [TextNode]s from an in-app
