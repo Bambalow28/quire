@@ -19,7 +19,9 @@ Finder findNode(String nodeId) => find.byKey(ValueKey('quire-node-$nodeId'));
 /// `find.byType(EditableText)` replacement for a test that wants a COUNT of
 /// rendered nodes rather than one specific node's.
 final Finder findAllNodes = find.byWidgetPredicate(
-  (widget) => widget.key is ValueKey<String> && (widget.key! as ValueKey<String>).value.startsWith('quire-node-'),
+  (widget) =>
+      widget.key is ValueKey<String> &&
+      (widget.key! as ValueKey<String>).value.startsWith('quire-node-'),
 );
 
 /// A second tap at [target] guaranteed NOT to register as the second half of
@@ -33,7 +35,10 @@ final Finder findAllNodes = find.byWidgetPredicate(
 /// multi-click streak already treats as unrelated — lands on the exact same
 /// offset a same-position touch tap would, since layout is deterministic.
 Future<void> tapAgain(WidgetTester tester, Offset target) async {
-  final gesture = await tester.startGesture(target, kind: PointerDeviceKind.mouse);
+  final gesture = await tester.startGesture(
+    target,
+    kind: PointerDeviceKind.mouse,
+  );
   await tester.pump();
   await gesture.up();
   await tester.pump();
@@ -78,7 +83,10 @@ Map<String, dynamic> _deltaJson({
 /// Sends one `TextInputClient.updateEditingStateWithDeltas` platform message
 /// carrying [deltas] (each built with [_deltaJson]), then pumps once so the
 /// editor's `DocumentInputClient` processes them.
-Future<void> sendDeltas(WidgetTester tester, List<Map<String, dynamic>> deltas) async {
+Future<void> sendDeltas(
+  WidgetTester tester,
+  List<Map<String, dynamic>> deltas,
+) async {
   final clientId = _clientId(tester);
   await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
     SystemChannels.textInput.name,
@@ -134,7 +142,11 @@ Future<void> typeText(WidgetTester tester, String text) async {
     selectionExtent: newSelectionOffset,
   );
   _localTrackedValue = TextEditingValue(
-    text: value.text.replaceRange(value.selection.start, value.selection.end, text),
+    text: value.text.replaceRange(
+      value.selection.start,
+      value.selection.end,
+      text,
+    ),
     selection: TextSelection.collapsed(offset: newSelectionOffset),
   );
   await sendDeltas(tester, [delta]);

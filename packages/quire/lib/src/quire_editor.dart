@@ -2,7 +2,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart' show TargetPlatform, defaultTargetPlatform;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/rendering.dart' show RenderParagraph;
@@ -233,7 +234,9 @@ class _QuireEditorState extends State<QuireEditor>
       // selection change arrives.
       if (widget.controller.composer.selection == null && id != null) {
         widget.controller.changeSelection(
-          DocumentSelection.collapsed(DocumentPosition(id, const TextNodePosition(0))),
+          DocumentSelection.collapsed(
+            DocumentPosition(id, const TextNodePosition(0)),
+          ),
         );
       }
       widget.controller.hideGhostCaret = false;
@@ -331,7 +334,9 @@ class _QuireEditorState extends State<QuireEditor>
                 size: Size.infinite,
                 painter: SelectionOverlayPainter(
                   rects: _computeOverlayRects(),
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.3),
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.primary.withValues(alpha: 0.3),
                 ),
               ),
             ),
@@ -350,9 +355,9 @@ class _QuireEditorState extends State<QuireEditor>
           child: IgnorePointer(
             child: Text(
               widget.placeholder!,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyLarge?.copyWith(color: Theme.of(context).hintColor),
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Theme.of(context).hintColor,
+              ),
             ),
           ),
         ),
@@ -371,7 +376,9 @@ class _QuireEditorState extends State<QuireEditor>
     // A checklist/list/header node with no typed text is still content the
     // user deliberately created — only a plain empty paragraph should show
     // the placeholder.
-    return only is TextNode && only.text.text.isEmpty && only.blockType == 'paragraph';
+    return only is TextNode &&
+        only.text.text.isEmpty &&
+        only.blockType == 'paragraph';
   }
 
   /// Hides a collapsed toggle list's content from the rendered node list.
@@ -391,7 +398,9 @@ class _QuireEditorState extends State<QuireEditor>
         collapsedAtIndent = null;
       }
       visible.add(node);
-      if (node is TextNode && node.blockType == 'toggleList' && node.isCollapsed) {
+      if (node is TextNode &&
+          node.blockType == 'toggleList' &&
+          node.isCollapsed) {
         collapsedAtIndent = indent;
       }
     }
@@ -451,7 +460,8 @@ class _QuireEditorState extends State<QuireEditor>
   /// this is reachable on the first frame and for a node the list hasn't
   /// laid out yet.
   RenderParagraph? _laidOutParagraph(String nodeId) {
-    final renderObject = _paragraphKeys[nodeId]?.currentContext?.findRenderObject();
+    final renderObject = _paragraphKeys[nodeId]?.currentContext
+        ?.findRenderObject();
     if (renderObject is! RenderParagraph) return null;
     if (!renderObject.attached || !renderObject.hasSize) return null;
     return renderObject;
@@ -549,11 +559,15 @@ class _QuireEditorState extends State<QuireEditor>
     if (startIndex < 0 || endIndex < 0 || tapIndex < 0) return false;
     if (tapIndex < startIndex || tapIndex > endIndex) return false;
     final startOffset = start.nodePosition;
-    if (tapIndex == startIndex && startOffset is TextNodePosition && offset < startOffset.offset) {
+    if (tapIndex == startIndex &&
+        startOffset is TextNodePosition &&
+        offset < startOffset.offset) {
       return false;
     }
     final endOffset = end.nodePosition;
-    if (tapIndex == endIndex && endOffset is TextNodePosition && offset > endOffset.offset) {
+    if (tapIndex == endIndex &&
+        endOffset is TextNodePosition &&
+        offset > endOffset.offset) {
       return false;
     }
     return true;
@@ -663,12 +677,18 @@ class _QuireEditorState extends State<QuireEditor>
   int _registerClick(Offset position, PointerDeviceKind kind) {
     final now = DateTime.now();
     // A fingertip lands less precisely than a cursor.
-    final slop = kind == PointerDeviceKind.touch ? _touchSlop * 2 : _multiClickSlop;
+    final slop = kind == PointerDeviceKind.touch
+        ? _touchSlop * 2
+        : _multiClickSlop;
     final lastTime = _lastClickDownTime;
     final lastPosition = _lastClickDownAt;
-    final withinTime = lastTime != null && now.difference(lastTime) < _multiClickTimeout;
-    final withinSlop = lastPosition != null && (position - lastPosition).distance < slop;
-    _clickCount = (withinTime && withinSlop && kind == _lastClickKind) ? _clickCount + 1 : 1;
+    final withinTime =
+        lastTime != null && now.difference(lastTime) < _multiClickTimeout;
+    final withinSlop =
+        lastPosition != null && (position - lastPosition).distance < slop;
+    _clickCount = (withinTime && withinSlop && kind == _lastClickKind)
+        ? _clickCount + 1
+        : 1;
     _lastClickKind = kind;
     _lastClickDownTime = now;
     _lastClickDownAt = position;
@@ -743,7 +763,10 @@ class _QuireEditorState extends State<QuireEditor>
           _selectWordAt(nodeId, offset);
         }
       } else if (position != null &&
-          (_caretAlreadyAt(position.nodeId, (position.nodePosition as TextNodePosition).offset) ||
+          (_caretAlreadyAt(
+                position.nodeId,
+                (position.nodePosition as TextNodePosition).offset,
+              ) ||
               _tapWithinSelection(
                 position.nodeId,
                 (position.nodePosition as TextNodePosition).offset,
@@ -817,7 +840,9 @@ class _QuireEditorState extends State<QuireEditor>
     return aOffset.compareTo(bOffset);
   }
 
-  (DocumentPosition, DocumentPosition) _wordPositionsAt(DocumentPosition position) {
+  (DocumentPosition, DocumentPosition) _wordPositionsAt(
+    DocumentPosition position,
+  ) {
     final modelText = _modelTextOf(position.nodeId);
     final offset = (position.nodePosition as TextNodePosition).offset;
     final (start, end) = _wordBoundaryIn(modelText, offset);
@@ -859,7 +884,8 @@ class _QuireEditorState extends State<QuireEditor>
     final endIndex = document.getNodeIndexById(endPos.nodeId);
     if (startIndex < 0 || endIndex < 0) return const [];
 
-    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (editorBox == null || !editorBox.attached) return const [];
 
     final perNode = <List<Rect>>[];
@@ -870,22 +896,32 @@ class _QuireEditorState extends State<QuireEditor>
       if (paragraph == null) continue;
 
       final length = node.text.text.length;
-      final segStart = i == startIndex ? (startPos.nodePosition as TextNodePosition).offset : 0;
-      final segEnd = i == endIndex ? (endPos.nodePosition as TextNodePosition).offset : length;
+      final segStart = i == startIndex
+          ? (startPos.nodePosition as TextNodePosition).offset
+          : 0;
+      final segEnd = i == endIndex
+          ? (endPos.nodePosition as TextNodePosition).offset
+          : length;
       if (segEnd <= segStart) continue;
 
       final boxes = paragraph.getBoxesForSelection(
         TextSelection(baseOffset: segStart, extentOffset: segEnd),
       );
-      final lastLineTop = (i == endIndex && boxes.isNotEmpty) ? boxes.last.top : null;
+      final lastLineTop = (i == endIndex && boxes.isNotEmpty)
+          ? boxes.last.top
+          : null;
       final nodeRects = <Rect>[];
       for (final box in boxes) {
         final stretchToEdge = lastLineTop == null || box.top < lastLineTop;
         final rect = stretchToEdge
             ? Rect.fromLTRB(box.left, box.top, paragraph.size.width, box.bottom)
             : box.toRect();
-        final topLeft = editorBox.globalToLocal(paragraph.localToGlobal(rect.topLeft));
-        final bottomRight = editorBox.globalToLocal(paragraph.localToGlobal(rect.bottomRight));
+        final topLeft = editorBox.globalToLocal(
+          paragraph.localToGlobal(rect.topLeft),
+        );
+        final bottomRight = editorBox.globalToLocal(
+          paragraph.localToGlobal(rect.bottomRight),
+        );
         if (!topLeft.dx.isFinite ||
             !topLeft.dy.isFinite ||
             !bottomRight.dx.isFinite ||
@@ -926,15 +962,25 @@ class _QuireEditorState extends State<QuireEditor>
     if (nodePosition is! TextNodePosition) return null;
     final paragraph = _laidOutParagraph(position.nodeId);
     if (paragraph == null) return null;
-    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (editorBox == null || !editorBox.attached) return null;
 
     final textPosition = TextPosition(offset: nodePosition.offset);
     final caretOffset = paragraph.getOffsetForCaret(textPosition, Rect.zero);
     final caretHeight = paragraph.getFullHeightForCaret(textPosition);
-    final caretRect = Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 2, caretHeight);
-    final topLeft = editorBox.globalToLocal(paragraph.localToGlobal(caretRect.topLeft));
-    final bottomRight = editorBox.globalToLocal(paragraph.localToGlobal(caretRect.bottomRight));
+    final caretRect = Rect.fromLTWH(
+      caretOffset.dx,
+      caretOffset.dy,
+      2,
+      caretHeight,
+    );
+    final topLeft = editorBox.globalToLocal(
+      paragraph.localToGlobal(caretRect.topLeft),
+    );
+    final bottomRight = editorBox.globalToLocal(
+      paragraph.localToGlobal(caretRect.bottomRight),
+    );
     if (!topLeft.dx.isFinite ||
         !topLeft.dy.isFinite ||
         !bottomRight.dx.isFinite ||
@@ -1019,7 +1065,9 @@ class _QuireEditorState extends State<QuireEditor>
 
   List<Widget> _buildSelectionHandles(BuildContext context) {
     final selection = widget.controller.composer.selection;
-    if (selection == null || selection.isCollapsed || _lastPointerKind == PointerDeviceKind.mouse) {
+    if (selection == null ||
+        selection.isCollapsed ||
+        _lastPointerKind == PointerDeviceKind.mouse) {
       _startHandleHitRect = null;
       _endHandleHitRect = null;
       return const [];
@@ -1036,10 +1084,13 @@ class _QuireEditorState extends State<QuireEditor>
 
     final startLocalRect = _handleLocalRect(startRect, isStart: true);
     final endLocalRect = _handleLocalRect(endRect, isStart: false);
-    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (editorBox != null && editorBox.attached) {
-      _startHandleHitRect = editorBox.localToGlobal(startLocalRect.topLeft) & startLocalRect.size;
-      _endHandleHitRect = editorBox.localToGlobal(endLocalRect.topLeft) & endLocalRect.size;
+      _startHandleHitRect =
+          editorBox.localToGlobal(startLocalRect.topLeft) & startLocalRect.size;
+      _endHandleHitRect =
+          editorBox.localToGlobal(endLocalRect.topLeft) & endLocalRect.size;
     } else {
       _startHandleHitRect = null;
       _endHandleHitRect = null;
@@ -1151,15 +1202,20 @@ class _QuireEditorState extends State<QuireEditor>
   void _dragSelectionHandle(Offset globalPosition) {
     final anchor = _dragAnchor;
     if (anchor == null) return;
-    final newPosition = _positionAt(globalPosition + (_dragTouchOffset ?? Offset.zero));
+    final newPosition = _positionAt(
+      globalPosition + (_dragTouchOffset ?? Offset.zero),
+    );
     if (newPosition == null) return;
-    widget.controller.changeSelection(DocumentSelection(base: anchor, extent: newPosition));
+    widget.controller.changeSelection(
+      DocumentSelection(base: anchor, extent: newPosition),
+    );
   }
 
   // --- Autoscroll while dragging past the viewport edge ------------------
 
   Rect? _viewportRect() {
-    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (editorBox == null || !editorBox.attached) return null;
     return editorBox.localToGlobal(Offset.zero) & editorBox.size;
   }
@@ -1167,11 +1223,13 @@ class _QuireEditorState extends State<QuireEditor>
   double _autoscrollVelocityFor(double dy, Rect viewport) {
     final topDepth = viewport.top + _autoscrollMargin - dy;
     if (topDepth > 0) {
-      return -_autoscrollMaxSpeed * (topDepth.clamp(0.0, _autoscrollMargin) / _autoscrollMargin);
+      return -_autoscrollMaxSpeed *
+          (topDepth.clamp(0.0, _autoscrollMargin) / _autoscrollMargin);
     }
     final bottomDepth = dy - (viewport.bottom - _autoscrollMargin);
     if (bottomDepth > 0) {
-      return _autoscrollMaxSpeed * (bottomDepth.clamp(0.0, _autoscrollMargin) / _autoscrollMargin);
+      return _autoscrollMaxSpeed *
+          (bottomDepth.clamp(0.0, _autoscrollMargin) / _autoscrollMargin);
     }
     return 0;
   }
@@ -1179,11 +1237,16 @@ class _QuireEditorState extends State<QuireEditor>
   void _syncAutoscroll() {
     final position = _dragGlobalPosition;
     final viewport = position == null ? null : _viewportRect();
-    if (position == null || viewport == null || _autoscrollVelocityFor(position.dy, viewport) == 0) {
+    if (position == null ||
+        viewport == null ||
+        _autoscrollVelocityFor(position.dy, viewport) == 0) {
       _stopAutoscroll();
       return;
     }
-    _autoscrollTimer ??= Timer.periodic(_autoscrollTick, (_) => _onAutoscrollTick());
+    _autoscrollTimer ??= Timer.periodic(
+      _autoscrollTick,
+      (_) => _onAutoscrollTick(),
+    );
   }
 
   void _stopAutoscroll() {
@@ -1208,8 +1271,13 @@ class _QuireEditorState extends State<QuireEditor>
       return;
     }
     final scrollPosition = _scrollController.position;
-    final newOffset = (scrollPosition.pixels + velocity * _autoscrollTick.inMilliseconds / 1000)
-        .clamp(scrollPosition.minScrollExtent, scrollPosition.maxScrollExtent);
+    final newOffset =
+        (scrollPosition.pixels +
+                velocity * _autoscrollTick.inMilliseconds / 1000)
+            .clamp(
+              scrollPosition.minScrollExtent,
+              scrollPosition.maxScrollExtent,
+            );
     if (newOffset != scrollPosition.pixels) _scrollController.jumpTo(newOffset);
     _updateDragSelectionAt(position);
   }
@@ -1230,7 +1298,8 @@ class _QuireEditorState extends State<QuireEditor>
         .map((n) => n.id)
         .toSet();
 
-    for (final staleId in _paragraphKeys.keys.where((id) => !liveIds.contains(id)).toList()) {
+    for (final staleId
+        in _paragraphKeys.keys.where((id) => !liveIds.contains(id)).toList()) {
       _paragraphKeys.remove(staleId);
       _checklistBoxes.remove(staleId);
       if (_caretPosition?.nodeId == staleId) {
@@ -1359,8 +1428,9 @@ class _QuireEditorState extends State<QuireEditor>
     final caretOffset = paragraph.getOffsetForCaret(textPosition, Rect.zero);
     final caretHeight = paragraph.getFullHeightForCaret(textPosition);
     return paragraph.localToGlobal(
-      Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 2, caretHeight).topLeft,
-    ) & Size(2, caretHeight);
+          Rect.fromLTWH(caretOffset.dx, caretOffset.dy, 2, caretHeight).topLeft,
+        ) &
+        Size(2, caretHeight);
   }
 
   @override
@@ -1377,7 +1447,8 @@ class _QuireEditorState extends State<QuireEditor>
   void requestKeepCaretVisible() => _keepCaretVisible();
 
   @override
-  DocumentPosition? resolveGlobalOffset(Offset globalOffset) => _positionAt(globalOffset);
+  DocumentPosition? resolveGlobalOffset(Offset globalOffset) =>
+      _positionAt(globalOffset);
 
   @override
   void showContextMenu() => _showContextMenu();
@@ -1385,7 +1456,9 @@ class _QuireEditorState extends State<QuireEditor>
   // --- Hardware keyboard ---------------------------------------------------
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
     final selection = widget.controller.composer.selection;
     final nodeId = selection?.extent.nodeId ?? widget.controller.focusedNodeId;
     if (nodeId == null) return KeyEventResult.ignored;
@@ -1407,13 +1480,19 @@ class _QuireEditorState extends State<QuireEditor>
     final nodes = widget.controller.document.nodesInDocumentOrder;
     final index = nodes.indexWhere((n) => n.id == nodeId);
     if (index == -1) return;
-    for (var i = index + (forward ? 1 : -1); forward ? i < nodes.length : i >= 0; forward ? i++ : i--) {
+    for (
+      var i = index + (forward ? 1 : -1);
+      forward ? i < nodes.length : i >= 0;
+      forward ? i++ : i--
+    ) {
       final target = nodes[i];
       if (target is! TextNode) continue;
       final offset = forward ? 0 : target.text.text.length;
       widget.controller.requestFocus(target.id);
       widget.controller.changeSelection(
-        DocumentSelection.collapsed(DocumentPosition(target.id, TextNodePosition(offset))),
+        DocumentSelection.collapsed(
+          DocumentPosition(target.id, TextNodePosition(offset)),
+        ),
       );
       return;
     }
@@ -1422,14 +1501,21 @@ class _QuireEditorState extends State<QuireEditor>
   void _extendSelectionTo(DocumentPosition newExtent) {
     final selection = widget.controller.composer.selection;
     final base = selection?.base ?? newExtent;
-    widget.controller.changeSelection(DocumentSelection(base: base, extent: newExtent));
+    widget.controller.changeSelection(
+      DocumentSelection(base: base, extent: newExtent),
+    );
   }
 
-  void _moveCaretHorizontally(String nodeId, {required bool forward, required bool extend}) {
+  void _moveCaretHorizontally(
+    String nodeId, {
+    required bool forward,
+    required bool extend,
+  }) {
     final selection = widget.controller.composer.selection;
     final node = widget.controller.document.getNodeById(nodeId);
     if (node is! TextNode) return;
-    final currentOffset = (selection?.extent.nodePosition as TextNodePosition?)?.offset ?? 0;
+    final currentOffset =
+        (selection?.extent.nodePosition as TextNodePosition?)?.offset ?? 0;
     if (forward && currentOffset >= node.text.text.length) {
       _moveToAdjacentNode(nodeId, forward: true);
       return;
@@ -1451,11 +1537,17 @@ class _QuireEditorState extends State<QuireEditor>
     if (extend) {
       _extendSelectionTo(newPosition);
     } else {
-      widget.controller.changeSelection(DocumentSelection.collapsed(newPosition));
+      widget.controller.changeSelection(
+        DocumentSelection.collapsed(newPosition),
+      );
     }
   }
 
-  void _moveCaretVertically(String nodeId, {required bool down, required bool extend}) {
+  void _moveCaretVertically(
+    String nodeId, {
+    required bool down,
+    required bool extend,
+  }) {
     final paragraph = _laidOutParagraph(nodeId);
     final selection = widget.controller.composer.selection;
     final nodePosition = selection?.extent.nodePosition;
@@ -1487,35 +1579,56 @@ class _QuireEditorState extends State<QuireEditor>
   /// never here too.
   Map<ShortcutActivator, VoidCallback> _shortcutBindings(String nodeId) {
     final bindings = <ShortcutActivator, VoidCallback>{
-      const SingleActivator(LogicalKeyboardKey.enter): widget.controller.insertNewline,
-      const SingleActivator(LogicalKeyboardKey.numpadEnter): widget.controller.insertNewline,
-      const SingleActivator(LogicalKeyboardKey.keyB, meta: true): widget.controller.toggleBold,
-      const SingleActivator(LogicalKeyboardKey.keyB, control: true): widget.controller.toggleBold,
-      const SingleActivator(LogicalKeyboardKey.keyI, meta: true): widget.controller.toggleItalic,
-      const SingleActivator(LogicalKeyboardKey.keyI, control: true): widget.controller.toggleItalic,
-      const SingleActivator(LogicalKeyboardKey.keyU, meta: true): widget.controller.toggleUnderline,
+      const SingleActivator(LogicalKeyboardKey.enter):
+          widget.controller.insertNewline,
+      const SingleActivator(LogicalKeyboardKey.numpadEnter):
+          widget.controller.insertNewline,
+      const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
+          widget.controller.toggleBold,
+      const SingleActivator(LogicalKeyboardKey.keyB, control: true):
+          widget.controller.toggleBold,
+      const SingleActivator(LogicalKeyboardKey.keyI, meta: true):
+          widget.controller.toggleItalic,
+      const SingleActivator(LogicalKeyboardKey.keyI, control: true):
+          widget.controller.toggleItalic,
+      const SingleActivator(LogicalKeyboardKey.keyU, meta: true):
+          widget.controller.toggleUnderline,
       const SingleActivator(LogicalKeyboardKey.keyU, control: true):
           widget.controller.toggleUnderline,
       const SingleActivator(LogicalKeyboardKey.keyX, meta: true, shift: true):
           widget.controller.toggleStrikethrough,
-      const SingleActivator(LogicalKeyboardKey.keyX, control: true, shift: true):
-          widget.controller.toggleStrikethrough,
-      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): widget.controller.undo,
-      const SingleActivator(LogicalKeyboardKey.keyZ, control: true): widget.controller.undo,
+      const SingleActivator(
+        LogicalKeyboardKey.keyX,
+        control: true,
+        shift: true,
+      ): widget.controller.toggleStrikethrough,
+      const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
+          widget.controller.undo,
+      const SingleActivator(LogicalKeyboardKey.keyZ, control: true):
+          widget.controller.undo,
       const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
           widget.controller.redo,
-      const SingleActivator(LogicalKeyboardKey.keyZ, control: true, shift: true):
-          widget.controller.redo,
-      const SingleActivator(LogicalKeyboardKey.keyA, meta: true): widget.controller.selectAll,
-      const SingleActivator(LogicalKeyboardKey.keyA, control: true): widget.controller.selectAll,
-      const SingleActivator(LogicalKeyboardKey.keyC, meta: true): widget.controller.copySelection,
+      const SingleActivator(
+        LogicalKeyboardKey.keyZ,
+        control: true,
+        shift: true,
+      ): widget.controller.redo,
+      const SingleActivator(LogicalKeyboardKey.keyA, meta: true):
+          widget.controller.selectAll,
+      const SingleActivator(LogicalKeyboardKey.keyA, control: true):
+          widget.controller.selectAll,
+      const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+          widget.controller.copySelection,
       const SingleActivator(LogicalKeyboardKey.keyC, control: true):
           widget.controller.copySelection,
-      const SingleActivator(LogicalKeyboardKey.keyX, meta: true): widget.controller.cutSelection,
+      const SingleActivator(LogicalKeyboardKey.keyX, meta: true):
+          widget.controller.cutSelection,
       const SingleActivator(LogicalKeyboardKey.keyX, control: true):
           widget.controller.cutSelection,
-      const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _pasteWithLinkDetection,
-      const SingleActivator(LogicalKeyboardKey.keyV, control: true): _pasteWithLinkDetection,
+      const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+          _pasteWithLinkDetection,
+      const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+          _pasteWithLinkDetection,
       const SingleActivator(LogicalKeyboardKey.arrowLeft): () =>
           _moveCaretHorizontally(nodeId, forward: false, extend: false),
       const SingleActivator(LogicalKeyboardKey.arrowRight): () =>
@@ -1546,8 +1659,12 @@ class _QuireEditorState extends State<QuireEditor>
     // comment (that mapping is deliberately left unbound, for the same
     // double-fire reason, on the platforms where it could ever race this).
     final isDesktop = switch (defaultTargetPlatform) {
-      TargetPlatform.macOS || TargetPlatform.windows || TargetPlatform.linux => true,
-      TargetPlatform.iOS || TargetPlatform.android || TargetPlatform.fuchsia => false,
+      TargetPlatform.macOS ||
+      TargetPlatform.windows ||
+      TargetPlatform.linux => true,
+      TargetPlatform.iOS ||
+      TargetPlatform.android ||
+      TargetPlatform.fuchsia => false,
     };
     final docSelection = widget.controller.composer.selection;
     if (isDesktop && docSelection != null && !docSelection.isCollapsed) {
@@ -1556,13 +1673,15 @@ class _QuireEditorState extends State<QuireEditor>
       bindings[const SingleActivator(LogicalKeyboardKey.delete)] =
           widget.controller.deleteSelection;
     } else if (isDesktop && docSelection != null && docSelection.isCollapsed) {
-      final offset = (docSelection.extent.nodePosition as TextNodePosition?)?.offset;
+      final offset =
+          (docSelection.extent.nodePosition as TextNodePosition?)?.offset;
       if (offset == 0) {
         bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>
             widget.controller.mergeWithPrevious(nodeId);
       } else if (offset != null) {
         final node = widget.controller.document.getNodeById(nodeId);
-        if (node is TextNode && widget.controller.isEmojiBefore(nodeId, offset)) {
+        if (node is TextNode &&
+            widget.controller.isEmojiBefore(nodeId, offset)) {
           bindings[const SingleActivator(LogicalKeyboardKey.backspace)] = () =>
               widget.controller.deleteEmojiBefore(nodeId, offset);
         } else {
@@ -1575,7 +1694,10 @@ class _QuireEditorState extends State<QuireEditor>
     if (widget.controller.isInsideTable(nodeId)) {
       bindings[const SingleActivator(LogicalKeyboardKey.tab)] = () =>
           widget.controller.moveToAdjacentCell(nodeId, forward: true);
-      bindings[const SingleActivator(LogicalKeyboardKey.tab, shift: true)] = () =>
+      bindings[const SingleActivator(
+        LogicalKeyboardKey.tab,
+        shift: true,
+      )] = () =>
           widget.controller.moveToAdjacentCell(nodeId, forward: false);
     }
     return bindings;
@@ -1601,7 +1723,8 @@ class _QuireEditorState extends State<QuireEditor>
     final (startPos, endPos) = selection.normalize(document);
     final primaryRect = _caretRectAt(startPos) ?? _caretRectAt(endPos);
     final secondaryRect = _caretRectAt(endPos);
-    final editorBox = _editorKey.currentContext?.findRenderObject() as RenderBox?;
+    final editorBox =
+        _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (primaryRect == null || editorBox == null || !editorBox.attached) return;
     final primaryGlobal = editorBox.localToGlobal(primaryRect.topCenter);
     final secondaryGlobal = editorBox.localToGlobal(
@@ -1674,7 +1797,10 @@ class _QuireEditorState extends State<QuireEditor>
     if (node is ImageNode) return _buildImageNode(context, node);
     if (node is TableNode) return _buildTableNode(context, node);
     if (node is HorizontalRuleNode) {
-      return const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Divider());
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Divider(),
+      );
     }
     return const SizedBox.shrink();
   }
@@ -1722,9 +1848,14 @@ class _QuireEditorState extends State<QuireEditor>
         children: [
           LayoutBuilder(
             builder: (context, constraints) {
-              final naturalWidth = columnCount * TableGrid.defaultMinColumnWidth;
-              if (constraints.hasBoundedWidth && naturalWidth > constraints.maxWidth) {
-                return SingleChildScrollView(scrollDirection: Axis.horizontal, child: tableGrid);
+              final naturalWidth =
+                  columnCount * TableGrid.defaultMinColumnWidth;
+              if (constraints.hasBoundedWidth &&
+                  naturalWidth > constraints.maxWidth) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: tableGrid,
+                );
               }
               return tableGrid;
             },
@@ -1734,7 +1865,11 @@ class _QuireEditorState extends State<QuireEditor>
             child: TableSettingsMenu(
               controller: widget.controller,
               tableId: node.id,
-              icon: Icon(Icons.settings_outlined, size: 16, color: Theme.of(context).hintColor),
+              icon: Icon(
+                Icons.settings_outlined,
+                size: 16,
+                color: Theme.of(context).hintColor,
+              ),
               iconSize: 16,
               padding: EdgeInsets.zero,
             ),
@@ -1752,7 +1887,9 @@ class _QuireEditorState extends State<QuireEditor>
       final textLength = node is TextNode ? node.text.text.length : null;
       if (paragraph == null || textLength == null || textLength < 1) return;
       final boxes = paragraph
-          .getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: math.min(2, textLength)))
+          .getBoxesForSelection(
+            TextSelection(baseOffset: 0, extentOffset: math.min(2, textLength)),
+          )
           .where((b) => b.bottom - b.top > 1)
           .toList();
       if (boxes.isEmpty) return;
@@ -1777,8 +1914,11 @@ class _QuireEditorState extends State<QuireEditor>
     }
     final theme = Theme.of(context);
     final style = _styleFor(theme, node);
-    final isFocused = _editorFocusNode.hasFocus && widget.controller.focusedNodeId == node.id;
-    final composingRange = isFocused ? _inputClient.composingRangeFor(node.id) : null;
+    final isFocused =
+        _editorFocusNode.hasFocus && widget.controller.focusedNodeId == node.id;
+    final composingRange = isFocused
+        ? _inputClient.composingRangeFor(node.id)
+        : null;
 
     // Keyed so tests can find/tap a specific node's rendered text block
     // without an EditableText to search for any more — see
@@ -1816,7 +1956,10 @@ class _QuireEditorState extends State<QuireEditor>
               IgnorePointer(
                 child: Text(
                   'Enter text...',
-                  style: _styleFor(theme, node).copyWith(color: theme.hintColor),
+                  style: _styleFor(
+                    theme,
+                    node,
+                  ).copyWith(color: theme.hintColor),
                 ),
               ),
               textBlock,
@@ -1829,7 +1972,10 @@ class _QuireEditorState extends State<QuireEditor>
         ? titleField
         : Row(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [prefix, Expanded(child: titleField)],
+            children: [
+              prefix,
+              Expanded(child: titleField),
+            ],
           );
 
     final indentPadding = node.indent * 24.0;
@@ -1840,7 +1986,9 @@ class _QuireEditorState extends State<QuireEditor>
           margin: EdgeInsets.only(left: indentPadding, bottom: 4),
           padding: const EdgeInsets.only(left: 12),
           decoration: BoxDecoration(
-            border: Border(left: BorderSide(color: theme.dividerColor, width: 3)),
+            border: Border(
+              left: BorderSide(color: theme.dividerColor, width: 3),
+            ),
           ),
           child: row,
         );
@@ -1867,7 +2015,10 @@ class _QuireEditorState extends State<QuireEditor>
       case 'callout':
         final hasContent = _containerHasContent(node);
         return Padding(
-          padding: EdgeInsets.only(left: indentPadding, bottom: hasContent ? 0 : 4),
+          padding: EdgeInsets.only(
+            left: indentPadding,
+            bottom: hasContent ? 0 : 4,
+          ),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -1891,14 +2042,19 @@ class _QuireEditorState extends State<QuireEditor>
         if (container != null && container.blockType == 'callout') {
           final isLast = _isLastContainerContentNode(node, container);
           return Padding(
-            padding: EdgeInsets.only(left: container.indent * 24.0, bottom: isLast ? 4 : 0),
+            padding: EdgeInsets.only(
+              left: container.indent * 24.0,
+              bottom: isLast ? 4 : 0,
+            ),
             child: Container(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
               decoration: BoxDecoration(
                 border: Border(
                   left: BorderSide(color: theme.dividerColor),
                   right: BorderSide(color: theme.dividerColor),
-                  bottom: isLast ? BorderSide(color: theme.dividerColor) : BorderSide.none,
+                  bottom: isLast
+                      ? BorderSide(color: theme.dividerColor)
+                      : BorderSide.none,
                 ),
                 borderRadius: isLast
                     ? const BorderRadius.vertical(bottom: Radius.circular(8))
@@ -1936,31 +2092,38 @@ class _QuireEditorState extends State<QuireEditor>
             if (!mounted) return;
             widget.controller.requestFocus(newId);
             widget.controller.changeSelection(
-              DocumentSelection.collapsed(DocumentPosition(newId, const TextNodePosition(0))),
+              DocumentSelection.collapsed(
+                DocumentPosition(newId, const TextNodePosition(0)),
+              ),
             );
           });
         },
         child: Text(
           label,
-          style: (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16)).copyWith(
-            fontSize: (theme.textTheme.bodyLarge?.fontSize ?? 16) * _containerContentScale,
-            fontStyle: FontStyle.italic,
-            color: theme.hintColor,
-          ),
+          style: (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+              .copyWith(
+                fontSize:
+                    (theme.textTheme.bodyLarge?.fontSize ?? 16) *
+                    _containerContentScale,
+                fontStyle: FontStyle.italic,
+                color: theme.hintColor,
+              ),
         ),
       ),
     );
   }
 
   Widget _buildImageNode(BuildContext context, ImageNode node) {
-    Widget errorBuilder(BuildContext context, Object error, StackTrace? st) => Container(
-      height: 120,
-      alignment: Alignment.center,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: const Icon(Icons.broken_image_outlined),
-    );
+    Widget errorBuilder(BuildContext context, Object error, StackTrace? st) =>
+        Container(
+          height: 120,
+          alignment: Alignment.center,
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          child: const Icon(Icons.broken_image_outlined),
+        );
     final uri = Uri.tryParse(node.url);
-    final isNetwork = uri != null && (uri.isScheme('http') || uri.isScheme('https'));
+    final isNetwork =
+        uri != null && (uri.isScheme('http') || uri.isScheme('https'));
     final image = isNetwork
         ? Image.network(node.url, errorBuilder: errorBuilder)
         : Image.file(File(node.url), errorBuilder: errorBuilder);
@@ -1973,7 +2136,10 @@ class _QuireEditorState extends State<QuireEditor>
           if (node.altText != null && node.altText!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 4),
-              child: Text(node.altText!, style: Theme.of(context).textTheme.bodySmall),
+              child: Text(
+                node.altText!,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
             ),
         ],
       ),
@@ -2010,14 +2176,18 @@ class _QuireEditorState extends State<QuireEditor>
   }
 
   TextStyle _styleFor(ThemeData theme, TextNode node) {
-    var base = (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16)).copyWith(
-      height: node.lineSpacing,
-    );
+    var base = (theme.textTheme.bodyLarge ?? const TextStyle(fontSize: 16))
+        .copyWith(height: node.lineSpacing);
     if (node.blockType == 'listItemTask' && node.isChecked) {
-      base = base.copyWith(decoration: TextDecoration.lineThrough, color: theme.hintColor);
+      base = base.copyWith(
+        decoration: TextDecoration.lineThrough,
+        color: theme.hintColor,
+      );
     }
     if (_isInsideContainer(node)) {
-      base = base.copyWith(fontSize: (base.fontSize ?? 16) * _containerContentScale);
+      base = base.copyWith(
+        fontSize: (base.fontSize ?? 16) * _containerContentScale,
+      );
     }
     switch (node.blockType) {
       case 'header1':
@@ -2064,7 +2234,8 @@ class _QuireEditorState extends State<QuireEditor>
   double _baselineFraction(BuildContext context, TextNode node) {
     final painter = _linePainter(context, node);
     final fraction =
-        painter.computeDistanceToActualBaseline(TextBaseline.alphabetic) / painter.height;
+        painter.computeDistanceToActualBaseline(TextBaseline.alphabetic) /
+        painter.height;
     painter.dispose();
     return fraction;
   }
@@ -2096,7 +2267,8 @@ class _QuireEditorState extends State<QuireEditor>
                   value: node.isChecked,
                   visualDensity: VisualDensity.compact,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  onChanged: (_) => widget.controller.toggleTaskChecked(node.id),
+                  onChanged: (_) =>
+                      widget.controller.toggleTaskChecked(node.id),
                 ),
               ),
             ),
@@ -2118,7 +2290,9 @@ class _QuireEditorState extends State<QuireEditor>
             padding: EdgeInsets.zero,
             iconSize: iconSize,
             visualDensity: VisualDensity.compact,
-            icon: Icon(node.isCollapsed ? Icons.chevron_right : Icons.expand_more),
+            icon: Icon(
+              node.isCollapsed ? Icons.chevron_right : Icons.expand_more,
+            ),
             onPressed: () => widget.controller.toggleCollapsed(node.id),
           ),
         ),
@@ -2126,7 +2300,8 @@ class _QuireEditorState extends State<QuireEditor>
     }
     final label = switch (node.blockType) {
       'listItemUnordered' => '•',
-      'listItemOrdered' => '${_orderedListNumber(widget.controller.document, node.id)}.',
+      'listItemOrdered' =>
+        '${_orderedListNumber(widget.controller.document, node.id)}.',
       _ => null,
     };
     if (label == null) return null;

@@ -21,7 +21,9 @@ Future<void> _pumpFocusStart(
   await t.tap(findNode(nodeId));
   await t.pumpAndSettle();
   c.changeSelection(
-    DocumentSelection.collapsed(DocumentPosition(nodeId, const TextNodePosition(0))),
+    DocumentSelection.collapsed(
+      DocumentPosition(nodeId, const TextNodePosition(0)),
+    ),
   );
   await t.pumpAndSettle();
 }

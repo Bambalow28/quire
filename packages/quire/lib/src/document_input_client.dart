@@ -145,7 +145,8 @@ class DocumentInputClient implements DeltaTextInputClient {
     // Text AND selection both unchanged: never send anything, or an active
     // composing region gets clobbered for no reason (e.g. a rebuild from an
     // unrelated `notifyListeners` while mid-composition).
-    if (expected.text == _remoteValue.text && expected.selection == _remoteValue.selection) {
+    if (expected.text == _remoteValue.text &&
+        expected.selection == _remoteValue.selection) {
       return;
     }
     _remoteValue = expected;
@@ -175,13 +176,18 @@ class DocumentInputClient implements DeltaTextInputClient {
     if (selection == null) {
       _crossNodeMode = false;
       _targetNodeId = null;
-      return const TextEditingValue(text: _imeSentinel, selection: TextSelection.collapsed(offset: 1));
+      return const TextEditingValue(
+        text: _imeSentinel,
+        selection: TextSelection.collapsed(offset: 1),
+      );
     }
     if (selection.base.nodeId == selection.extent.nodeId) {
       final node = document.getNodeById(selection.base.nodeId);
       final basePos = selection.base.nodePosition;
       final extentPos = selection.extent.nodePosition;
-      if (node is TextNode && basePos is TextNodePosition && extentPos is TextNodePosition) {
+      if (node is TextNode &&
+          basePos is TextNodePosition &&
+          extentPos is TextNodePosition) {
         final sameTarget = !_crossNodeMode && _targetNodeId == node.id;
         _crossNodeMode = false;
         _targetNodeId = node.id;
@@ -204,7 +210,10 @@ class DocumentInputClient implements DeltaTextInputClient {
       // Non-text selection (an image/table/rule node, say).
       _crossNodeMode = false;
       _targetNodeId = null;
-      return const TextEditingValue(text: _imeSentinel, selection: TextSelection.collapsed(offset: 1));
+      return const TextEditingValue(
+        text: _imeSentinel,
+        selection: TextSelection.collapsed(offset: 1),
+      );
     }
     // Cross-node selection: no single node's text to show — stand in with a
     // fully-selected placeholder (see `_crossNodePlaceholder`).
@@ -212,7 +221,10 @@ class DocumentInputClient implements DeltaTextInputClient {
     _targetNodeId = null;
     return const TextEditingValue(
       text: _crossNodePlaceholder,
-      selection: TextSelection(baseOffset: _imeSentinel.length, extentOffset: _crossNodePlaceholder.length),
+      selection: TextSelection(
+        baseOffset: _imeSentinel.length,
+        extentOffset: _crossNodePlaceholder.length,
+      ),
     );
   }
 
@@ -298,15 +310,20 @@ class DocumentInputClient implements DeltaTextInputClient {
     final modelLength = node.text.text.length;
     // A selection ending at offset 0 sits ON the sentinel — clamp to model 0
     // rather than treating it as "before the document".
-    int toModel(int fieldOffset) =>
-        _snapToGraphemeBoundary(
-          node.text.text,
-          (fieldOffset - _imeSentinel.length).clamp(0, modelLength),
-        );
+    int toModel(int fieldOffset) => _snapToGraphemeBoundary(
+      node.text.text,
+      (fieldOffset - _imeSentinel.length).clamp(0, modelLength),
+    );
     host.controller.changeSelection(
       DocumentSelection(
-        base: DocumentPosition(nodeId, TextNodePosition(toModel(selection.baseOffset))),
-        extent: DocumentPosition(nodeId, TextNodePosition(toModel(selection.extentOffset))),
+        base: DocumentPosition(
+          nodeId,
+          TextNodePosition(toModel(selection.baseOffset)),
+        ),
+        extent: DocumentPosition(
+          nodeId,
+          TextNodePosition(toModel(selection.extentOffset)),
+        ),
       ),
     );
   }
@@ -329,20 +346,39 @@ class DocumentInputClient implements DeltaTextInputClient {
       return;
     }
 
-    var start = (deletedRange.start - _imeSentinel.length).clamp(0, node.text.text.length);
-    var end = (deletedRange.end - _imeSentinel.length).clamp(0, node.text.text.length);
+    var start = (deletedRange.start - _imeSentinel.length).clamp(
+      0,
+      node.text.text.length,
+    );
+    var end = (deletedRange.end - _imeSentinel.length).clamp(
+      0,
+      node.text.text.length,
+    );
     // iOS's own soft-keyboard delete isn't reliably grapheme-aware for a
     // custom TextInputClient — widen a pure deletion to the enclosing
     // grapheme cluster(s) so a picked emoji's surrogate pair (or a longer
     // ZWJ sequence) goes as one character, not half of one.
-    final (expandedStart, expandedEnd) = _expandToGraphemeClusters(node.text.text, start, end);
+    final (expandedStart, expandedEnd) = _expandToGraphemeClusters(
+      node.text.text,
+      start,
+      end,
+    );
     start = expandedStart;
     end = expandedEnd;
     if (end <= start) return;
-    host.controller.replaceText(nodeId: nodeId, start: start, end: end, insertedText: '');
+    host.controller.replaceText(
+      nodeId: nodeId,
+      start: start,
+      end: end,
+      insertedText: '',
+    );
   }
 
-  void _applyReplacement(TextEditingValue before, TextRange range, String text) {
+  void _applyReplacement(
+    TextEditingValue before,
+    TextRange range,
+    String text,
+  ) {
     if (_crossNodeMode) {
       host.controller.replaceSelectionWithText(text);
       return;
@@ -356,7 +392,12 @@ class DocumentInputClient implements DeltaTextInputClient {
     final end = (range.end - _imeSentinel.length).clamp(0, modelLength);
 
     if (!text.contains('\n')) {
-      host.controller.replaceText(nodeId: nodeId, start: start, end: end, insertedText: text);
+      host.controller.replaceText(
+        nodeId: nodeId,
+        start: start,
+        end: end,
+        insertedText: text,
+      );
       return;
     }
     // A soft keyboard's Return key sends no key event — with
@@ -448,7 +489,10 @@ class DocumentInputClient implements DeltaTextInputClient {
   bool onFocusReceived() => false;
 
   @override
-  void didChangeInputControl(TextInputControl? oldControl, TextInputControl? newControl) {}
+  void didChangeInputControl(
+    TextInputControl? oldControl,
+    TextInputControl? newControl,
+  ) {}
 
   @override
   void showToolbar() => host.showContextMenu();

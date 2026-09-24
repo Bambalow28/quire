@@ -36,9 +36,7 @@ void main() {
       ),
     );
     await _pumpEditor(tester, controller);
-    final at =
-        tester.getTopLeft(findNode('a')) +
-        const Offset(40, 8);
+    final at = tester.getTopLeft(findNode('a')) + const Offset(40, 8);
 
     await _mouseClick(tester, at);
     await _mouseClick(tester, at);
@@ -58,9 +56,7 @@ void main() {
       ),
     );
     await _pumpEditor(tester, controller);
-    final at =
-        tester.getTopLeft(findNode('a')) +
-        const Offset(40, 8);
+    final at = tester.getTopLeft(findNode('a')) + const Offset(40, 8);
 
     await _mouseClick(tester, at);
     await _mouseClick(tester, at);

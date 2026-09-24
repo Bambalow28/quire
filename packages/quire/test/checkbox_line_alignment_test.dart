@@ -39,7 +39,9 @@ Future<void> _pumpEditor(
       .toList();
   final box = boxes.first;
   final topLeft = renderParagraph.localToGlobal(Offset(box.left, box.top));
-  final bottomLeft = renderParagraph.localToGlobal(Offset(box.left, box.bottom));
+  final bottomLeft = renderParagraph.localToGlobal(
+    Offset(box.left, box.bottom),
+  );
   return (topLeft.dy, bottomLeft.dy);
 }
 

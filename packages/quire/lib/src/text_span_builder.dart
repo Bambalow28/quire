@@ -69,9 +69,13 @@ TextSpan buildAttributedTextSpan({
     if (validComposing &&
         start >= composingRange.start &&
         end <= composingRange.end) {
-      runStyle = runStyle.merge(const TextStyle(decoration: TextDecoration.underline));
+      runStyle = runStyle.merge(
+        const TextStyle(decoration: TextDecoration.underline),
+      );
     }
-    children.add(TextSpan(text: text.text.substring(start, end), style: runStyle));
+    children.add(
+      TextSpan(text: text.text.substring(start, end), style: runStyle),
+    );
   }
 
   return TextSpan(style: style, children: children);
@@ -88,7 +92,11 @@ TextStyle _mergeAttributionStyles(
   return style;
 }
 
-TextStyle _applyAttribution(TextStyle style, Attribution a, BuildContext context) {
+TextStyle _applyAttribution(
+  TextStyle style,
+  Attribution a,
+  BuildContext context,
+) {
   switch (a.name) {
     case 'bold':
       return style.merge(const TextStyle(fontWeight: FontWeight.w700));
@@ -120,21 +128,28 @@ TextStyle _applyAttribution(TextStyle style, Attribution a, BuildContext context
       return style.merge(
         TextStyle(
           fontFamily: 'monospace',
-          backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+          backgroundColor: Theme.of(
+            context,
+          ).colorScheme.surfaceContainerHighest,
         ),
       );
     case 'link':
       // A fixed blue rather than the theme's primary — links read as links
       // by convention regardless of the app's accent color.
       return style.merge(
-        const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
+        const TextStyle(
+          color: Colors.blue,
+          decoration: TextDecoration.underline,
+        ),
       );
     case 'color':
       final color = _parseColor(a.value['hex']);
       return color == null ? style : style.merge(TextStyle(color: color));
     case 'backgroundColor':
       final color = _parseColor(a.value['hex']);
-      return color == null ? style : style.merge(TextStyle(backgroundColor: color));
+      return color == null
+          ? style
+          : style.merge(TextStyle(backgroundColor: color));
     case 'fontSize':
       final size = a.value['size'];
       if (size is num) return style.merge(TextStyle(fontSize: size.toDouble()));

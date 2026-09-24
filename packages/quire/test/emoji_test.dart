@@ -123,49 +123,46 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a selection-only delta landing mid-emoji (as a tap can, via raw '
-    'hit-testing) snaps forward, past the emoji, instead of splitting its '
-    'surrogate pair',
-    (tester) async {
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: [TextNode(id: 'a', text: AttributedText('Hi 😀'))],
-        ),
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(body: QuireEditor(controller: controller)),
-        ),
-      );
-      await tester.tap(findNode('a'));
-      await tester.pumpAndSettle();
+  testWidgets('a selection-only delta landing mid-emoji (as a tap can, via raw '
+      'hit-testing) snaps forward, past the emoji, instead of splitting its '
+      'surrogate pair', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('Hi 😀'))],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: QuireEditor(controller: controller)),
+      ),
+    );
+    await tester.tap(findNode('a'));
+    await tester.pumpAndSettle();
 
-      // Model text "Hi 😀": H=0 i=1 ' '=2 😀=3..5. IME/field offsets add 1
-      // for the leading sentinel (see document_input_client.dart).
-      await moveSelection(tester, const TextSelection.collapsed(offset: 5));
-      expect(
-        controller.composer.selection,
-        DocumentSelection.collapsed(
-          DocumentPosition('a', const TextNodePosition(5)),
-        ),
-        reason:
-            'field offset 5 (model 4, mid-emoji) is how a real iOS field '
-            'reports "after the emoji" — even for a tap well past the end of '
-            'the line, which never reports the full-length offset 6 — so it '
-            'snaps forward, past the emoji, not back in front of it',
-      );
+    // Model text "Hi 😀": H=0 i=1 ' '=2 😀=3..5. IME/field offsets add 1
+    // for the leading sentinel (see document_input_client.dart).
+    await moveSelection(tester, const TextSelection.collapsed(offset: 5));
+    expect(
+      controller.composer.selection,
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(5)),
+      ),
+      reason:
+          'field offset 5 (model 4, mid-emoji) is how a real iOS field '
+          'reports "after the emoji" — even for a tap well past the end of '
+          'the line, which never reports the full-length offset 6 — so it '
+          'snaps forward, past the emoji, not back in front of it',
+    );
 
-      await moveSelection(tester, const TextSelection.collapsed(offset: 6));
-      expect(
-        controller.composer.selection,
-        DocumentSelection.collapsed(
-          DocumentPosition('a', const TextNodePosition(5)),
-        ),
-        reason: 'field offset 6 (model 5, also mid-emoji) snaps the other way',
-      );
-    },
-  );
+    await moveSelection(tester, const TextSelection.collapsed(offset: 6));
+    expect(
+      controller.composer.selection,
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(5)),
+      ),
+      reason: 'field offset 6 (model 5, also mid-emoji) snaps the other way',
+    );
+  });
 
   testWidgets(
     'a soft-keyboard backspace after the caret lands mid-emoji removes the '

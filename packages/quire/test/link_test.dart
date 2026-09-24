@@ -179,9 +179,7 @@ void main() {
     // Tap on the actual glyphs, not the field's center — the field spans
     // the full row width, and only the linked text itself should be
     // clickable (see _linkUrlAtGlobalPosition's doc comment).
-    await tester.tapAt(
-      tester.getTopLeft(findNode('a')) + const Offset(5, 5),
-    );
+    await tester.tapAt(tester.getTopLeft(findNode('a')) + const Offset(5, 5));
     await tester.pumpAndSettle();
 
     expect(launched, ['https://example.com']);
