@@ -797,8 +797,8 @@ class _QuireEditorState extends State<QuireEditor> {
   static const _touchHold = Duration(milliseconds: 500);
   static const _touchSlop = 12.0;
 
-  // Desktop double/triple-click word/paragraph selection — mouse/trackpad
-  // only, tracked independently of `_tapRepeatsCaret`/`_tapDownAt` (those
+  // Double/triple-click (or tap) word/paragraph selection, tracked
+  // independently of `_tapRepeatsCaret`/`_tapDownAt` (those
   // exist for touch's "tap an existing caret to show the toolbar" gesture,
   // a different thing). Native click-count APIs aren't exposed through a
   // raw `Listener`, so this reimplements the standard OS heuristic: same
@@ -810,16 +810,29 @@ class _QuireEditorState extends State<QuireEditor> {
   Offset? _lastClickDownAt;
   DateTime? _lastClickDownTime;
 
-  int _registerNonTouchClick(Offset position) {
+  PointerDeviceKind? _lastClickKind;
+
+  void _resetClickStreak() {
+    _clickCount = 0;
+    _lastClickDownTime = null;
+  }
+
+  int _registerClick(Offset position, PointerDeviceKind kind) {
     final now = DateTime.now();
+    // A fingertip lands less precisely than a cursor.
+    final slop = kind == PointerDeviceKind.touch
+        ? _touchSlop * 2
+        : _multiClickSlop;
     final lastTime = _lastClickDownTime;
     final lastPosition = _lastClickDownAt;
     final withinTime =
         lastTime != null && now.difference(lastTime) < _multiClickTimeout;
     final withinSlop =
-        lastPosition != null &&
-        (position - lastPosition).distance < _multiClickSlop;
-    _clickCount = (withinTime && withinSlop) ? _clickCount + 1 : 1;
+        lastPosition != null && (position - lastPosition).distance < slop;
+    _clickCount = (withinTime && withinSlop && kind == _lastClickKind)
+        ? _clickCount + 1
+        : 1;
+    _lastClickKind = kind;
     _lastClickDownTime = now;
     _lastClickDownAt = position;
     return _clickCount;
@@ -836,11 +849,7 @@ class _QuireEditorState extends State<QuireEditor> {
     _pointerDownOnHandle = _isOnSelectionHandle(event.position);
     if (_pointerDownOnHandle) return;
     _lastPointerKind = event.kind;
-    if (event.kind != PointerDeviceKind.touch) {
-      _registerNonTouchClick(event.position);
-    } else {
-      _clickCount = 0;
-    }
+    _registerClick(event.position, event.kind);
     final position = _positionAt(event.position);
     if (position != null) {
       final offset = (position.nodePosition as TextNodePosition).offset;
@@ -871,6 +880,7 @@ class _QuireEditorState extends State<QuireEditor> {
       _touchDownAt = event.position;
       _touchHoldTimer = Timer(_touchHold, () {
         if (!mounted) return;
+        _resetClickStreak(); // a long-press is not the first tap of a double
         final held = _positionAt(_touchDownAt!);
         _dragBase = held;
         // Long-press selects the word first, the way iOS/Android do; a drag
@@ -906,11 +916,8 @@ class _QuireEditorState extends State<QuireEditor> {
     }
     final downAt = _tapDownAt;
     final moved = downAt != null && (event.position - downAt).distance > 8;
+    if (moved) _resetClickStreak(); // a drag is not the first tap of a double
     if (!moved) {
-      // ponytail: no double-tap-to-select-word yet — a second caret write in
-      // the same gesture gets reverted by EditableText's own value pipeline.
-      // Long-press covers word selection on touch; revisit with the
-      // editor-level DeltaTextInputClient rewrite.
       final position = _positionAt(event.position);
       final linkUrl = _linkUrlAtGlobalPosition(event.position);
       if (linkUrl != null) {
@@ -923,15 +930,12 @@ class _QuireEditorState extends State<QuireEditor> {
         // `assert(readOnly && !obscureText)`), which is why this lives here,
         // in the same document-level pointer listener drag-to-select uses.
         launchUrl(Uri.parse(linkUrl), mode: LaunchMode.externalApplication);
-      } else if (event.kind != PointerDeviceKind.touch &&
-          position != null &&
-          _clickCount >= 2) {
+      } else if (position != null && _clickCount >= 2) {
         // EditableText's own internal tap recognizer (a separate gesture
         // recognizer this raw `Listener` can't suppress — same reason the
         // link-tap branch above can't stop it either) fires on this same
         // click a moment later and would otherwise collapse this selection
-        // right back down, same race the ponytail note above hit for
-        // touch's double-tap — `_selectWordAt`/`_selectNodeAt` guard against
+        // right back down — `_selectWordAt`/`_selectNodeAt` guard against
         // it themselves now (see `_suppressFieldSelectionSync`), so this can
         // just call them directly.
         final nodeId = position.nodeId;

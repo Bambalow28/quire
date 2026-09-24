@@ -356,45 +356,47 @@ class _QuireToolbarState extends State<QuireToolbar>
 /// The emoji picker ships its own light-only default palette — this maps it
 /// onto the host app's [ColorScheme] so it reads as part of the editor
 /// (light or dark) instead of a foreign light popup dropped on top of it.
-Config _emojiPickerConfig(ColorScheme scheme, VoidCallback onBackspace) => Config(
-  // Null, not the package's own fixed default (256): the picker now lives
-  // inside an [Expanded] in [_EmojiPanel], so its own ancestor already
-  // bounds its height — a second, independent fixed height here just fights
-  // that instead of filling it.
-  height: null,
-  emojiViewConfig: EmojiViewConfig(backgroundColor: scheme.surface),
-  categoryViewConfig: CategoryViewConfig(
-    backgroundColor: scheme.surface,
-    indicatorColor: scheme.primary,
-    iconColor: scheme.onSurfaceVariant,
-    iconColorSelected: scheme.primary,
-    backspaceColor: scheme.primary,
-    dividerColor: scheme.outlineVariant,
-  ),
-  bottomActionBarConfig: BottomActionBarConfig(
-    backgroundColor: scheme.surface,
-    buttonColor: scheme.primary,
-    buttonIconColor: Colors.white,
-    // The package's own search/backspace buttons are a 48px IconButton
-    // (Material's minimum tap target) inside a 40px CircleAvatar — the
-    // button always clips against its own circle. Building the row
-    // ourselves with a circular *button style* instead of a separate
-    // undersized avatar sidesteps that entirely.
-    customBottomActionBar: (config, state, showSearchView) => _EmojiActionBar(
-      scheme: scheme,
-      onSearch: showSearchView,
-      onBackspace: onBackspace,
-    ),
-  ),
-  searchViewConfig: SearchViewConfig(
-    backgroundColor: scheme.surfaceContainerHighest,
-    buttonIconColor: scheme.onSurfaceVariant,
-  ),
-  skinToneConfig: SkinToneConfig(
-    dialogBackgroundColor: scheme.surface,
-    indicatorColor: scheme.onSurfaceVariant,
-  ),
-);
+Config _emojiPickerConfig(ColorScheme scheme, VoidCallback onBackspace) =>
+    Config(
+      // Null, not the package's own fixed default (256): the picker now lives
+      // inside an [Expanded] in [_EmojiPanel], so its own ancestor already
+      // bounds its height — a second, independent fixed height here just fights
+      // that instead of filling it.
+      height: null,
+      emojiViewConfig: EmojiViewConfig(backgroundColor: scheme.surface),
+      categoryViewConfig: CategoryViewConfig(
+        backgroundColor: scheme.surface,
+        indicatorColor: scheme.primary,
+        iconColor: scheme.onSurfaceVariant,
+        iconColorSelected: scheme.primary,
+        backspaceColor: scheme.primary,
+        dividerColor: scheme.outlineVariant,
+      ),
+      bottomActionBarConfig: BottomActionBarConfig(
+        backgroundColor: scheme.surface,
+        buttonColor: scheme.primary,
+        buttonIconColor: Colors.white,
+        // The package's own search/backspace buttons are a 48px IconButton
+        // (Material's minimum tap target) inside a 40px CircleAvatar — the
+        // button always clips against its own circle. Building the row
+        // ourselves with a circular *button style* instead of a separate
+        // undersized avatar sidesteps that entirely.
+        customBottomActionBar: (config, state, showSearchView) =>
+            _EmojiActionBar(
+              scheme: scheme,
+              onSearch: showSearchView,
+              onBackspace: onBackspace,
+            ),
+      ),
+      searchViewConfig: SearchViewConfig(
+        backgroundColor: scheme.surfaceContainerHighest,
+        buttonIconColor: scheme.onSurfaceVariant,
+      ),
+      skinToneConfig: SkinToneConfig(
+        dialogBackgroundColor: scheme.surface,
+        indicatorColor: scheme.onSurfaceVariant,
+      ),
+    );
 
 /// Replaces the emoji picker's own search/backspace row — see the
 /// `customBottomActionBar` comment above for why.

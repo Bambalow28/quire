@@ -198,10 +198,11 @@ void main() {
       // line: field offset 5 — between the emoji's two surrogates — never the
       // full-length 6.
       tester
-              .widget<EditableText>(find.byType(EditableText).first)
-              .controller
-              .selection =
-          const TextSelection.collapsed(offset: 5);
+          .widget<EditableText>(find.byType(EditableText).first)
+          .controller
+          .selection = const TextSelection.collapsed(
+        offset: 5,
+      );
       await tester.pump();
 
       // The soft keyboard deletes from ITS copy of the text, at ITS caret.
@@ -308,43 +309,40 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a soft-keyboard delete that only removes half the emoji (a lone '
-    'surrogate left behind) still clears the whole emoji',
-    (tester) async {
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: [TextNode(id: 'a', text: AttributedText('Hi 😀'))],
-        ),
-      );
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(body: QuireEditor(controller: controller)),
-        ),
-      );
-      await tester.tap(find.byType(EditableText).first);
-      await tester.pumpAndSettle();
+  testWidgets('a soft-keyboard delete that only removes half the emoji (a lone '
+      'surrogate left behind) still clears the whole emoji', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('Hi 😀'))],
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: QuireEditor(controller: controller)),
+      ),
+    );
+    await tester.tap(find.byType(EditableText).first);
+    await tester.pumpAndSettle();
 
-      // Field text is the sentinel + "Hi 😀" (see quire_editor.dart's
-      // `_fieldTextFor`). Simulate the platform's own soft-keyboard delete
-      // clipping only the emoji's trailing low surrogate — as observed on a
-      // real device — rather than the whole 2-unit character, leaving a
-      // dangling high surrogate the model must still recover from.
-      final fieldController = tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller;
-      final fieldText = fieldController.text;
-      final partiallyDeleted = fieldText.substring(0, fieldText.length - 1);
-      fieldController.value = TextEditingValue(
-        text: partiallyDeleted,
-        selection: TextSelection.collapsed(offset: partiallyDeleted.length),
-      );
-      await tester.pump();
+    // Field text is the sentinel + "Hi 😀" (see quire_editor.dart's
+    // `_fieldTextFor`). Simulate the platform's own soft-keyboard delete
+    // clipping only the emoji's trailing low surrogate — as observed on a
+    // real device — rather than the whole 2-unit character, leaving a
+    // dangling high surrogate the model must still recover from.
+    final fieldController = tester
+        .widget<EditableText>(find.byType(EditableText).first)
+        .controller;
+    final fieldText = fieldController.text;
+    final partiallyDeleted = fieldText.substring(0, fieldText.length - 1);
+    fieldController.value = TextEditingValue(
+      text: partiallyDeleted,
+      selection: TextSelection.collapsed(offset: partiallyDeleted.length),
+    );
+    await tester.pump();
 
-      final node = controller.document.getNodeById('a')! as TextNode;
-      expect(node.text.text, 'Hi ');
-    },
-  );
+    final node = controller.document.getNodeById('a')! as TextNode;
+    expect(node.text.text, 'Hi ');
+  });
 
   testWidgets(
     'pressing the emoji panel\'s close button returns to the keyboard, not the options list',

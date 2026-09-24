@@ -7,7 +7,9 @@ Future<void> _pumpEditor(
   QuireEditorController controller,
 ) async {
   await tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+    MaterialApp(
+      home: Scaffold(body: QuireEditor(controller: controller)),
+    ),
   );
 }
 
@@ -141,32 +143,35 @@ void main() {
     );
   });
 
-  test('pressing Enter on a toggle line writes into it, not a sibling toggle', () {
-    final controller = QuireEditorController(
-      document: MutableDocument(
-        nodes: [
-          TextNode(
-            id: 'toggle',
-            text: AttributedText('Section'),
-            metadata: const {'blockType': 'toggleList'},
-          ),
-        ],
-      ),
-    );
-    controller.changeSelection(
-      DocumentSelection.collapsed(
-        DocumentPosition('toggle', const TextNodePosition(7)),
-      ),
-    );
+  test(
+    'pressing Enter on a toggle line writes into it, not a sibling toggle',
+    () {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [
+            TextNode(
+              id: 'toggle',
+              text: AttributedText('Section'),
+              metadata: const {'blockType': 'toggleList'},
+            ),
+          ],
+        ),
+      );
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('toggle', const TextNodePosition(7)),
+        ),
+      );
 
-    controller.insertNewline();
+      controller.insertNewline();
 
-    final nodes = controller.document.nodesInDocumentOrder.toList();
-    expect(nodes, hasLength(2));
-    final child = nodes[1] as TextNode;
-    expect(child.blockType, 'paragraph');
-    expect(child.indent, 1);
-  });
+      final nodes = controller.document.nodesInDocumentOrder.toList();
+      expect(nodes, hasLength(2));
+      final child = nodes[1] as TextNode;
+      expect(child.blockType, 'paragraph');
+      expect(child.indent, 1);
+    },
+  );
 
   test(
     'pressing Enter on a collapsed toggle line moves to a sibling line, not hidden content',
@@ -343,9 +348,6 @@ void main() {
     final contentField = tester.widget<EditableText>(
       find.byType(EditableText).at(1),
     );
-    expect(
-      contentField.style.fontSize,
-      lessThan(titleField.style.fontSize!),
-    );
+    expect(contentField.style.fontSize, lessThan(titleField.style.fontSize!));
   });
 }

@@ -18,7 +18,9 @@ void main() {
       ),
     );
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+      MaterialApp(
+        home: Scaffold(body: QuireEditor(controller: controller)),
+      ),
     );
 
     await tester.tap(find.byType(EditableText).first);
@@ -38,7 +40,9 @@ void main() {
       ),
     );
     await tester.pumpWidget(
-      MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+      MaterialApp(
+        home: Scaffold(body: QuireEditor(controller: controller)),
+      ),
     );
 
     expect(kEmptyNodeSentinel, ' ');

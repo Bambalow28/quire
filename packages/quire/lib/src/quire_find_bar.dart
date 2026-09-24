@@ -47,10 +47,7 @@ class _QuireFindBarState extends State<QuireFindBar> {
             borderRadius: BorderRadius.circular(16),
             clipBehavior: Clip.antiAlias,
             child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 8,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -68,7 +65,10 @@ class _QuireFindBarState extends State<QuireFindBar> {
                           onChanged: widget.controller.find,
                         ),
                       ),
-                      Text(counterText, style: Theme.of(context).textTheme.bodySmall),
+                      Text(
+                        counterText,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                       IconButton(
                         tooltip: 'Previous match',
                         visualDensity: VisualDensity.compact,

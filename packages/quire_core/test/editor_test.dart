@@ -668,34 +668,31 @@ void main() {
     expect(node.blockType, 'paragraph');
   });
 
-  test(
-    'MergeWithPreviousNodeRequest on an empty callout content line joins it '
-    'into the title and removes it, hiding the callout back to just its '
-    'title line',
-    () {
-      final doc = MutableDocument(
-        nodes: [
-          _para('callout', 'Heads up', metadata: {'blockType': 'callout'}),
-          _para('content', '', metadata: {'indent': 1}),
-        ],
-      );
-      final composer = DocumentComposer();
-      final editor = _editor(doc, composer);
+  test('MergeWithPreviousNodeRequest on an empty callout content line joins it '
+      'into the title and removes it, hiding the callout back to just its '
+      'title line', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para('callout', 'Heads up', metadata: {'blockType': 'callout'}),
+        _para('content', '', metadata: {'indent': 1}),
+      ],
+    );
+    final composer = DocumentComposer();
+    final editor = _editor(doc, composer);
 
-      editor.execute([MergeWithPreviousNodeRequest('content')]);
+    editor.execute([MergeWithPreviousNodeRequest('content')]);
 
-      final nodes = doc.nodesInDocumentOrder.toList();
-      expect(nodes, hasLength(1));
-      expect(nodes.single.id, 'callout');
-      expect((nodes.single as TextNode).text.text, 'Heads up');
-      expect(
-        composer.selection,
-        DocumentSelection.collapsed(
-          DocumentPosition('callout', const TextNodePosition(8)),
-        ),
-      );
-    },
-  );
+    final nodes = doc.nodesInDocumentOrder.toList();
+    expect(nodes, hasLength(1));
+    expect(nodes.single.id, 'callout');
+    expect((nodes.single as TextNode).text.text, 'Heads up');
+    expect(
+      composer.selection,
+      DocumentSelection.collapsed(
+        DocumentPosition('callout', const TextNodePosition(8)),
+      ),
+    );
+  });
 
   test('ToggleTaskCheckedRequest flips checked and undo restores it', () {
     final doc = MutableDocument(

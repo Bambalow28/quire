@@ -175,7 +175,10 @@ void main() {
       final history = EditHistory(editor);
 
       history.execute([
-        InsertTextRequest(DocumentPosition('a', const TextNodePosition(5)), 'X'),
+        InsertTextRequest(
+          DocumentPosition('a', const TextNodePosition(5)),
+          'X',
+        ),
       ]);
       expect((doc.getNodeById('a') as TextNode).text.text, 'HelloX');
 
@@ -191,7 +194,10 @@ void main() {
       ]);
 
       history.execute([
-        InsertTextRequest(DocumentPosition('a', const TextNodePosition(6)), 'Y'),
+        InsertTextRequest(
+          DocumentPosition('a', const TextNodePosition(6)),
+          'Y',
+        ),
       ]);
       expect((doc.getNodeById('a') as TextNode).text.text, 'HelloXY');
 
@@ -221,5 +227,48 @@ void main() {
 
     history.undo();
     expect((doc.getNodeById('a') as TextNode).text.text, 'Hello');
+  });
+
+  test('a transaction is one undo step', () {
+    final doc = MutableDocument(nodes: [_para('a', 'Hello')]);
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(5)),
+      ),
+    );
+    final editor = Editor(
+      doc,
+      composer,
+      requestHandlers: [...defaultRequestHandlers, historyRequestHandler],
+    );
+    final history = EditHistory(editor);
+    final before = doc.toJson();
+
+    history.transaction(() {
+      history.execute([
+        InsertTextRequest(
+          DocumentPosition('a', const TextNodePosition(5)),
+          ' one',
+        ),
+      ]);
+      history.execute([InsertNewlineRequest()]);
+      history.execute([InsertTextRequest(composer.selection!.extent, 'two')]);
+    });
+
+    expect(doc.nodes, hasLength(2));
+    expect(history.undoCount, 1);
+    history.undo();
+    expect(doc.toJson(), before);
+  });
+
+  test('document order cache follows inserts and deletes', () {
+    final doc = MutableDocument(nodes: [_para('a', 'A'), _para('c', 'C')]);
+    expect(doc.getNodeIndexById('c'), 1);
+    doc.insertNodeAfter('a', _para('b', 'B'));
+    expect(doc.getNodeIndexById('c'), 2);
+    expect(doc.getNodeAt(1).id, 'b');
+    doc.deleteNode('a');
+    expect(doc.getNodeIndexById('a'), -1);
+    expect(doc.getNodeIndexById('c'), 1);
   });
 }

@@ -46,8 +46,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final start = tester.getTopLeft(find.byType(EditableText)) +
-          const Offset(4, 8);
+      final start =
+          tester.getTopLeft(find.byType(EditableText)) + const Offset(4, 8);
       final end = start + const Offset(60, 0);
 
       // Touch drag-to-select starts from a long-press hold (see

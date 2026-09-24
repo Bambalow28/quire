@@ -41,9 +41,7 @@ class _LinkDialogState extends State<_LinkDialog> {
     final url = _urlController.text.trim();
     if (url.isEmpty) return;
     final text = _textController.text.trim();
-    Navigator.of(
-      context,
-    ).pop((url: url, text: text.isEmpty ? url : text));
+    Navigator.of(context).pop((url: url, text: text.isEmpty ? url : text));
   }
 
   @override

@@ -65,7 +65,10 @@ class NodeTextController extends TextEditingController {
           : text.substring(kEmptyNodeSentinel.length);
       return TextSpan(
         style: style,
-        children: [if (sentinel != null) sentinel, TextSpan(text: body)],
+        children: [
+          if (sentinel != null) sentinel,
+          TextSpan(text: body),
+        ],
       );
     }
 
@@ -153,7 +156,10 @@ class NodeTextController extends TextEditingController {
         // A fixed blue rather than the theme's primary — links read as
         // links by convention regardless of the app's accent color.
         return style.merge(
-          const TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
+          const TextStyle(
+            color: Colors.blue,
+            decoration: TextDecoration.underline,
+          ),
         );
       case 'color':
         final color = _parseColor(a.value['hex']);

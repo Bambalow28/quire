@@ -99,36 +99,35 @@ void main() {
     },
   );
 
-  testWidgets(
-    'pressing Enter on the title reveals the content line',
-    (tester) async {
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: [
-            TextNode(
-              id: 'callout',
-              text: AttributedText('Heads up'),
-              metadata: const {'blockType': 'callout'},
-            ),
-          ],
-        ),
-      );
-      controller.changeSelection(
-        DocumentSelection.collapsed(
-          DocumentPosition('callout', const TextNodePosition(8)),
-        ),
-      );
-      await _pumpEditor(tester, controller);
+  testWidgets('pressing Enter on the title reveals the content line', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'callout',
+            text: AttributedText('Heads up'),
+            metadata: const {'blockType': 'callout'},
+          ),
+        ],
+      ),
+    );
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('callout', const TextNodePosition(8)),
+      ),
+    );
+    await _pumpEditor(tester, controller);
 
-      controller.insertNewline();
-      await tester.pump();
+    controller.insertNewline();
+    await tester.pump();
 
-      expect(find.byType(EditableText), findsNWidgets(2));
-      final nodes = controller.document.nodesInDocumentOrder.toList();
-      expect(nodes, hasLength(2));
-      expect((nodes[1] as TextNode).indent, 1);
-    },
-  );
+    expect(find.byType(EditableText), findsNWidgets(2));
+    final nodes = controller.document.nodesInDocumentOrder.toList();
+    expect(nodes, hasLength(2));
+    expect((nodes[1] as TextNode).indent, 1);
+  });
 
   testWidgets('a callout with content does not show the hint', (tester) async {
     final controller = QuireEditorController(

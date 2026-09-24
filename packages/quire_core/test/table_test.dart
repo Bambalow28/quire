@@ -293,41 +293,38 @@ void main() {
       },
     );
 
-    test(
-      'DeleteTableRowRequest does not throw when the next row has its own '
-      'origin cell beside a cell moving down into it',
-      () {
-        // 3-column table. Row 0: A(colSpan1,rowSpan2) covers col0 rows0-1,
-        // B(colSpan2,rowSpan1) covers cols1-2 row0. Row 1 has its own origin
-        // cell C(colSpan2) at columns 1-2 (col0 of row1 is covered by A).
-        final table = TableNode(
-          id: 't',
-          rows: [
-            TableRow(
-              cells: [
-                TableCell(nodes: [_para('a', 'A')], rowSpan: 2),
-                TableCell(nodes: [_para('b', 'B')], colSpan: 2),
-              ],
-            ),
-            TableRow(
-              cells: [
-                TableCell(nodes: [_para('c', 'C')], colSpan: 2),
-              ],
-            ),
-          ],
-        );
-        final doc = MutableDocument(nodes: [table]);
-        final editor = _editor(doc, DocumentComposer());
+    test('DeleteTableRowRequest does not throw when the next row has its own '
+        'origin cell beside a cell moving down into it', () {
+      // 3-column table. Row 0: A(colSpan1,rowSpan2) covers col0 rows0-1,
+      // B(colSpan2,rowSpan1) covers cols1-2 row0. Row 1 has its own origin
+      // cell C(colSpan2) at columns 1-2 (col0 of row1 is covered by A).
+      final table = TableNode(
+        id: 't',
+        rows: [
+          TableRow(
+            cells: [
+              TableCell(nodes: [_para('a', 'A')], rowSpan: 2),
+              TableCell(nodes: [_para('b', 'B')], colSpan: 2),
+            ],
+          ),
+          TableRow(
+            cells: [
+              TableCell(nodes: [_para('c', 'C')], colSpan: 2),
+            ],
+          ),
+        ],
+      );
+      final doc = MutableDocument(nodes: [table]);
+      final editor = _editor(doc, DocumentComposer());
 
-        editor.execute([DeleteTableRowRequest('t', row: 0)]);
+      editor.execute([DeleteTableRowRequest('t', row: 0)]);
 
-        expect(table.gridSize, (1, 3));
-        expect((table.cellAt(0, 0)!.nodes.single as TextNode).text.text, 'A');
-        expect(table.cellAt(0, 0)!.rowSpan, 1);
-        expect((table.cellAt(0, 1)!.nodes.single as TextNode).text.text, 'C');
-        expect(table.cellAt(0, 1), same(table.cellAt(0, 2)));
-      },
-    );
+      expect(table.gridSize, (1, 3));
+      expect((table.cellAt(0, 0)!.nodes.single as TextNode).text.text, 'A');
+      expect(table.cellAt(0, 0)!.rowSpan, 1);
+      expect((table.cellAt(0, 1)!.nodes.single as TextNode).text.text, 'C');
+      expect(table.cellAt(0, 1), same(table.cellAt(0, 2)));
+    });
 
     test('DeleteTableRowRequest on the last row deletes the whole table', () {
       final table = _grid('t', 1, 2);
@@ -399,53 +396,50 @@ void main() {
       },
     );
 
-    test(
-      'MergeTableCellsRequest rejects a range whose corner is a covered '
-      'position rather than a true cell origin',
-      () {
-        // 3x3 grid where (0,0) already spans 2x2, covering (0,0),(0,1),
-        // (1,0),(1,1). A merge request anchored at (1,0) — a covered
-        // position, not that cell's true origin (0,0) — must not corrupt
-        // the grid.
-        final table = TableNode(
-          id: 't',
-          rows: [
-            TableRow(
-              cells: [
-                TableCell(nodes: [_para('a', 'A')], rowSpan: 2, colSpan: 2),
-                _cell('c', 'C'),
-              ],
-            ),
-            TableRow(cells: [_cell('f', 'F')]),
-            TableRow(cells: [_cell('g', 'G'), _cell('h', 'H'), _cell('i', 'I')]),
-          ],
-        );
-        final doc = MutableDocument(nodes: [table]);
-        final editor = _editor(doc, DocumentComposer());
-        final beforeJson = doc.toJson();
-
-        editor.execute([
-          MergeTableCellsRequest(
-            't',
-            fromRow: 1,
-            fromColumn: 0,
-            toRow: 1,
-            toColumn: 2,
+    test('MergeTableCellsRequest rejects a range whose corner is a covered '
+        'position rather than a true cell origin', () {
+      // 3x3 grid where (0,0) already spans 2x2, covering (0,0),(0,1),
+      // (1,0),(1,1). A merge request anchored at (1,0) — a covered
+      // position, not that cell's true origin (0,0) — must not corrupt
+      // the grid.
+      final table = TableNode(
+        id: 't',
+        rows: [
+          TableRow(
+            cells: [
+              TableCell(nodes: [_para('a', 'A')], rowSpan: 2, colSpan: 2),
+              _cell('c', 'C'),
+            ],
           ),
-        ]);
+          TableRow(cells: [_cell('f', 'F')]),
+          TableRow(cells: [_cell('g', 'G'), _cell('h', 'H'), _cell('i', 'I')]),
+        ],
+      );
+      final doc = MutableDocument(nodes: [table]);
+      final editor = _editor(doc, DocumentComposer());
+      final beforeJson = doc.toJson();
 
-        // Rejected: nothing changed, and the grid stays internally
-        // consistent (every cell's span correctly reflects its footprint,
-        // gridSize reachable, no exceptions).
-        expect(doc.toJson(), beforeJson);
-        expect(table.gridSize, (3, 3));
-        final origin = table.cellAt(0, 0)!;
-        expect(origin.rowSpan, 2);
-        expect(origin.colSpan, 2);
-        expect(table.cellAt(1, 0), same(origin));
-        expect(table.cellAt(1, 1), same(origin));
-      },
-    );
+      editor.execute([
+        MergeTableCellsRequest(
+          't',
+          fromRow: 1,
+          fromColumn: 0,
+          toRow: 1,
+          toColumn: 2,
+        ),
+      ]);
+
+      // Rejected: nothing changed, and the grid stays internally
+      // consistent (every cell's span correctly reflects its footprint,
+      // gridSize reachable, no exceptions).
+      expect(doc.toJson(), beforeJson);
+      expect(table.gridSize, (3, 3));
+      final origin = table.cellAt(0, 0)!;
+      expect(origin.rowSpan, 2);
+      expect(origin.colSpan, 2);
+      expect(table.cellAt(1, 0), same(origin));
+      expect(table.cellAt(1, 1), same(origin));
+    });
 
     test('merge then split returns to the original grid shape', () {
       final table = _grid('t', 3, 3);

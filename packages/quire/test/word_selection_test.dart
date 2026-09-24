@@ -39,4 +39,19 @@ void main() {
       containsAll([ContextMenuButtonType.cut, ContextMenuButtonType.copy]),
     );
   });
+
+  testWidgets('double-tap selects the word under the finger', (tester) async {
+    final controller = _controller();
+    final target = await _pump(tester, controller);
+
+    await tester.tapAt(target);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tapAt(target);
+    await tester.pumpAndSettle();
+
+    final sel = controller.composer.selection!;
+    final base = (sel.base.nodePosition as TextNodePosition).offset;
+    final ext = (sel.extent.nodePosition as TextNodePosition).offset;
+    expect('hello world'.substring(base, ext), 'hello');
+  });
 }

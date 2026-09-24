@@ -76,6 +76,24 @@ class EditHistory implements EditListener {
     _streakNextOffset = null;
   }
 
+  // Depth of nested [transaction] calls, and whether the current outermost
+  // one has already pushed its snapshot.
+  int _transactionDepth = 0;
+  bool _transactionRecorded = false;
+
+  /// Runs [body] as a single undo step: every [execute] inside it shares one
+  /// snapshot, taken before its first document edit. Used for compound edits
+  /// (replace-selection, multi-line paste) that are several requests under
+  /// the hood but one action to the user.
+  void transaction(void Function() body) {
+    _transactionDepth++;
+    try {
+      body();
+    } finally {
+      if (--_transactionDepth == 0) _transactionRecorded = false;
+    }
+  }
+
   bool get canUndo => _undoStack.isNotEmpty;
   bool get canRedo => _redoStack.isNotEmpty;
   int get undoCount => _undoStack.length;
@@ -102,6 +120,17 @@ class EditHistory implements EditListener {
     // movement — the actual cause of the gesture feeling laggy and twitchy.
     if (requests.every((r) => r is ChangeSelectionRequest)) return;
 
+    if (_transactionDepth > 0) {
+      if (!_transactionRecorded) {
+        _push(_snapshot());
+        _redoStack.clear();
+        _transactionRecorded = true;
+      }
+      _streakNodeId = null;
+      _streakNextOffset = null;
+      return;
+    }
+
     final key = _singleCharInsertKey(requests);
     final continuesStreak =
         key != null &&
@@ -109,10 +138,7 @@ class EditHistory implements EditListener {
         _streakNextOffset == key.$2 &&
         _undoStack.isNotEmpty;
 
-    if (!continuesStreak) {
-      _undoStack.add(_snapshot());
-      if (_undoStack.length > maxEntries) _undoStack.removeAt(0);
-    }
+    if (!continuesStreak) _push(_snapshot());
 
     if (key != null) {
       _streakNodeId = key.$1;
@@ -122,6 +148,11 @@ class EditHistory implements EditListener {
       _streakNextOffset = null;
     }
     _redoStack.clear();
+  }
+
+  void _push(_Snapshot snapshot) {
+    _undoStack.add(snapshot);
+    if (_undoStack.length > maxEntries) _undoStack.removeAt(0);
   }
 
   _Snapshot _snapshot() => (

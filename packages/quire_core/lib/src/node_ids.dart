@@ -11,5 +11,4 @@ int _idCounter = 0;
 /// creates the same number of nodes as a prior one. Two nodes sharing an id
 /// then share editor state (controller, focus node, GlobalKey), which is
 /// what made an existing item vanish and its checkbox stop responding.
-String generateNodeId() =>
-    'node-${_random.nextInt(1 << 32)}-${_idCounter++}';
+String generateNodeId() => 'node-${_random.nextInt(1 << 32)}-${_idCounter++}';

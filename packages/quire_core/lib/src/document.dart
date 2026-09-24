@@ -35,15 +35,22 @@ class MutableDocument {
 
   DocumentNode? getNodeById(String id) => _idIndex[id];
 
-  DocumentNode getNodeAt(int index) => nodesInDocumentOrder.elementAt(index);
+  DocumentNode getNodeAt(int index) => nodesInDocumentOrder[index];
 
   /// Every node in document order: top-level nodes in list order, with a
   /// [TableNode]'s cell nodes visited row-major, immediately after the
   /// table itself.
-  /// Built eagerly rather than as a `sync*` generator: callers iterate this
-  /// on every frame and several mutate the document while walking a copy,
-  /// and a materialised list is both cheaper and safe to iterate.
-  List<DocumentNode> get nodesInDocumentOrder {
+  /// Cached, and dropped by every structural mutation (all of which go
+  /// through [_indexNode]/[_unindexNode]/[reindexNestedNodes]) — callers hit
+  /// this on every frame and per node in loops, so rebuilding it each time
+  /// made long documents O(n²) to walk. Returned unmodifiable so a caller
+  /// can't corrupt the cache; copy it before mutating the document mid-walk.
+  List<DocumentNode> get nodesInDocumentOrder => _order ??= _buildOrder();
+
+  List<DocumentNode>? _order;
+  Map<String, int>? _positions;
+
+  List<DocumentNode> _buildOrder() {
     final ordered = <DocumentNode>[];
     for (final node in _nodes) {
       ordered.add(node);
@@ -55,20 +62,19 @@ class MutableDocument {
         }
       }
     }
-    return ordered;
+    return List.unmodifiable(ordered);
   }
 
-  // ponytail: O(n) scan of nodesInDocumentOrder per lookup, add a cached
-  // position map (invalidated on mutation) if profiling shows it matters.
-  int getNodeIndexById(String id) {
-    if (!_idIndex.containsKey(id)) return -1;
-    var index = 0;
-    for (final node in nodesInDocumentOrder) {
-      if (node.id == id) return index;
-      index++;
-    }
-    return -1;
+  void _invalidateOrder() {
+    _order = null;
+    _positions = null;
   }
+
+  int getNodeIndexById(String id) =>
+      (_positions ??= {
+        for (final (i, n) in nodesInDocumentOrder.indexed) n.id: i,
+      })[id] ??
+      -1;
 
   DocumentNode? getNodeBefore(String id) {
     final index = getNodeIndexById(id);
@@ -79,7 +85,7 @@ class MutableDocument {
   DocumentNode? getNodeAfter(String id) {
     final index = getNodeIndexById(id);
     if (index < 0) return null;
-    final ordered = nodesInDocumentOrder.toList();
+    final ordered = nodesInDocumentOrder;
     if (index >= ordered.length - 1) return null;
     return ordered[index + 1];
   }
@@ -162,6 +168,7 @@ class MutableDocument {
   /// which nodes are nested without going through
   /// [insertNodeAfter]/[insertNodeBefore]/[deleteNode].
   void reindexNestedNodes() {
+    _invalidateOrder();
     _idIndex.clear();
     _containerOf.clear();
     for (final node in _nodes) {
@@ -174,6 +181,7 @@ class MutableDocument {
       _idIndex[node.id] == null || identical(_idIndex[node.id], node),
       'Duplicate node id "${node.id}": two distinct nodes cannot share an id.',
     );
+    _invalidateOrder();
     _idIndex[node.id] = node;
     _containerOf[node.id] = container;
     if (node is TableNode) {
@@ -188,6 +196,7 @@ class MutableDocument {
   }
 
   void _unindexNode(DocumentNode node) {
+    _invalidateOrder();
     _idIndex.remove(node.id);
     _containerOf.remove(node.id);
     if (node is TableNode) {

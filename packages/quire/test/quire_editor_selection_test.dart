@@ -227,7 +227,8 @@ void main() {
         expect(
           rects[i].bottom,
           greaterThan(rects[i + 1].top),
-          reason: 'rect $i ends at ${rects[i].bottom} but rect ${i + 1} '
+          reason:
+              'rect $i ends at ${rects[i].bottom} but rect ${i + 1} '
               'starts at ${rects[i + 1].top} — leaves a gap',
         );
       }
@@ -791,9 +792,7 @@ void main() {
       await tester.pump();
       const steps = 10;
       for (var i = 1; i <= steps; i++) {
-        await gesture.moveTo(
-          Offset.lerp(start, target, i / steps)!,
-        );
+        await gesture.moveTo(Offset.lerp(start, target, i / steps)!);
         await tester.pump(const Duration(milliseconds: 16));
       }
       await gesture.up();
@@ -903,8 +902,7 @@ void main() {
         const TextPosition(offset: 10 + 1),
       );
       final handlePoint =
-          renderEditable.localToGlobal(caretRect.topLeft) +
-          const Offset(0, -5);
+          renderEditable.localToGlobal(caretRect.topLeft) + const Offset(0, -5);
 
       final gesture = await tester.startGesture(handlePoint);
       await tester.pump(const Duration(milliseconds: 600));
@@ -1056,67 +1054,64 @@ void main() {
     },
   );
 
-  testWidgets(
-    'holding a selection-handle drag at the bottom viewport edge '
-    'autoscrolls too, and keeps widening the selection while the finger '
-    'holds still',
-    (tester) async {
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: List.generate(
-            25,
-            (i) => TextNode(
-              id: 'p$i',
-              text: AttributedText(
-                'paragraph number $i with enough extra text in it to wrap '
-                'across multiple lines and add real height to the document',
-              ),
+  testWidgets('holding a selection-handle drag at the bottom viewport edge '
+      'autoscrolls too, and keeps widening the selection while the finger '
+      'holds still', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: List.generate(
+          25,
+          (i) => TextNode(
+            id: 'p$i',
+            text: AttributedText(
+              'paragraph number $i with enough extra text in it to wrap '
+              'across multiple lines and add real height to the document',
             ),
           ),
         ),
-      );
-      await _pumpEditor(tester, controller);
+      ),
+    );
+    await _pumpEditor(tester, controller);
 
-      controller.changeSelection(
-        DocumentSelection(
-          base: DocumentPosition('p0', const TextNodePosition(0)),
-          extent: DocumentPosition('p1', const TextNodePosition(5)),
-        ),
-      );
-      await tester.pump();
-      expect(endHandle(), findsOneWidget);
+    controller.changeSelection(
+      DocumentSelection(
+        base: DocumentPosition('p0', const TextNodePosition(0)),
+        extent: DocumentPosition('p1', const TextNodePosition(5)),
+      ),
+    );
+    await tester.pump();
+    expect(endHandle(), findsOneWidget);
 
-      final viewport = tester.getRect(find.byType(QuireEditor));
-      final scrollable = tester.state<ScrollableState>(
-        find.byType(Scrollable).first,
-      );
-      final offsetBeforeHold = scrollable.position.pixels;
+    final viewport = tester.getRect(find.byType(QuireEditor));
+    final scrollable = tester.state<ScrollableState>(
+      find.byType(Scrollable).first,
+    );
+    final offsetBeforeHold = scrollable.position.pixels;
 
-      final grab = tester.getCenter(endHandle());
-      final holdPoint = Offset(grab.dx, viewport.bottom - 5);
-      final gesture = await tester.startGesture(grab);
-      await tester.pump();
-      await gesture.moveTo(holdPoint);
-      await tester.pump();
+    final grab = tester.getCenter(endHandle());
+    final holdPoint = Offset(grab.dx, viewport.bottom - 5);
+    final gesture = await tester.startGesture(grab);
+    await tester.pump();
+    await gesture.moveTo(holdPoint);
+    await tester.pump();
 
-      for (var i = 0; i < 40; i++) {
-        await tester.pump(const Duration(milliseconds: 16));
-      }
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
 
-      expect(scrollable.position.pixels, greaterThan(offsetBeforeHold));
+    expect(scrollable.position.pixels, greaterThan(offsetBeforeHold));
 
-      final selection = controller.composer.selection;
-      expect(selection, isNotNull);
-      final (startPos, endPos) = selection!.normalize(controller.document);
-      // The start handle was never touched.
-      expect(startPos, DocumentPosition('p0', const TextNodePosition(0)));
-      final endIndex = controller.document.getNodeIndexById(endPos.nodeId);
-      expect(endIndex, greaterThan(4));
+    final selection = controller.composer.selection;
+    expect(selection, isNotNull);
+    final (startPos, endPos) = selection!.normalize(controller.document);
+    // The start handle was never touched.
+    expect(startPos, DocumentPosition('p0', const TextNodePosition(0)));
+    final endIndex = controller.document.getNodeIndexById(endPos.nodeId);
+    expect(endIndex, greaterThan(4));
 
-      await gesture.up();
-      await tester.pump();
-    },
-  );
+    await gesture.up();
+    await tester.pump();
+  });
 
   testWidgets(
     'a long-press-then-drag extends the selection by whole words, snapping '
@@ -1191,29 +1186,26 @@ void main() {
       return controller;
     }
 
-    testWidgets(
-      'tapping Select All opens the toolbar with Cut/Copy, no second '
-      'long-press needed, and the cross-node document selection survives '
-      'the toolbar appearing',
-      (tester) async {
-        final controller = await pumpMultiParagraphAndOpenMenu(tester);
+    testWidgets('tapping Select All opens the toolbar with Cut/Copy, no second '
+        'long-press needed, and the cross-node document selection survives '
+        'the toolbar appearing', (tester) async {
+      final controller = await pumpMultiParagraphAndOpenMenu(tester);
 
-        await tester.tap(find.text('Select all'));
-        await tester.pumpAndSettle();
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
 
-        expect(find.text('Copy'), findsOneWidget);
-        expect(find.text('Cut'), findsOneWidget);
+      expect(find.text('Copy'), findsOneWidget);
+      expect(find.text('Cut'), findsOneWidget);
 
-        // Showing the toolbar gives the focused field its own local
-        // selection (see `_showToolbarForWholeField`) — this must not have
-        // clobbered the document-wide selection back down to that one node.
-        final selection = controller.composer.selection;
-        expect(selection, isNotNull);
-        expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
-        expect(selection.base.nodeId, 'a');
-        expect(selection.extent.nodeId, 'b');
-      },
-    );
+      // Showing the toolbar gives the focused field its own local
+      // selection (see `_showToolbarForWholeField`) — this must not have
+      // clobbered the document-wide selection back down to that one node.
+      final selection = controller.composer.selection;
+      expect(selection, isNotNull);
+      expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
+      expect(selection.base.nodeId, 'a');
+      expect(selection.extent.nodeId, 'b');
+    });
 
     testWidgets(
       'Copy after Select All puts the whole document on the clipboard, not '
@@ -1231,24 +1223,21 @@ void main() {
       },
     );
 
-    testWidgets(
-      'Cut after Select All empties the whole document, not just one '
-      'paragraph',
-      (tester) async {
-        final controller = await pumpMultiParagraphAndOpenMenu(tester);
+    testWidgets('Cut after Select All empties the whole document, not just one '
+        'paragraph', (tester) async {
+      final controller = await pumpMultiParagraphAndOpenMenu(tester);
 
-        await tester.tap(find.text('Select all'));
-        await tester.pumpAndSettle();
-        await tester.tap(find.text('Cut'));
-        await tester.pumpAndSettle();
+      await tester.tap(find.text('Select all'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cut'));
+      await tester.pumpAndSettle();
 
-        expect(controller.document.nodes.length, 1);
-        final remaining = controller.document.nodes.single as TextNode;
-        expect(remaining.text.text, isEmpty);
+      expect(controller.document.nodes.length, 1);
+      final remaining = controller.document.nodes.single as TextNode;
+      expect(remaining.text.text, isEmpty);
 
-        final data = await Clipboard.getData('text/plain');
-        expect(data?.text, 'first paragraph\nsecond paragraph');
-      },
-    );
+      final data = await Clipboard.getData('text/plain');
+      expect(data?.text, 'first paragraph\nsecond paragraph');
+    });
   });
 }

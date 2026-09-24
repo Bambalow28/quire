@@ -4,27 +4,30 @@ import 'package:quire/quire.dart';
 
 void main() {
   group('QuireEditorController find & replace', () {
-    test('find populates matches across multiple nodes and sets the counter', () {
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: [
-            TextNode(id: 'a', text: AttributedText('the cat sat')),
-            TextNode(id: 'b', text: AttributedText('on the mat')),
-          ],
-        ),
-      );
+    test(
+      'find populates matches across multiple nodes and sets the counter',
+      () {
+        final controller = QuireEditorController(
+          document: MutableDocument(
+            nodes: [
+              TextNode(id: 'a', text: AttributedText('the cat sat')),
+              TextNode(id: 'b', text: AttributedText('on the mat')),
+            ],
+          ),
+        );
 
-      controller.find('the');
+        controller.find('the');
 
-      expect(controller.matches.length, 2);
-      expect(controller.matches[0].nodeId, 'a');
-      expect(controller.matches[0].start, 0);
-      expect(controller.matches[0].end, 3);
-      expect(controller.matches[1].nodeId, 'b');
-      expect(controller.matches[1].start, 3);
-      expect(controller.matches[1].end, 6);
-      expect(controller.currentMatchIndex, 0);
-    });
+        expect(controller.matches.length, 2);
+        expect(controller.matches[0].nodeId, 'a');
+        expect(controller.matches[0].start, 0);
+        expect(controller.matches[0].end, 3);
+        expect(controller.matches[1].nodeId, 'b');
+        expect(controller.matches[1].start, 3);
+        expect(controller.matches[1].end, 6);
+        expect(controller.currentMatchIndex, 0);
+      },
+    );
 
     test('find is case-insensitive', () {
       final controller = QuireEditorController(
@@ -72,21 +75,24 @@ void main() {
       expect(controller.currentMatchIndex, 2); // wraps backward
     });
 
-    test('replaceCurrent replaces just the current match and preserves the rest', () {
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: [TextNode(id: 'a', text: AttributedText('cat cat cat'))],
-        ),
-      );
+    test(
+      'replaceCurrent replaces just the current match and preserves the rest',
+      () {
+        final controller = QuireEditorController(
+          document: MutableDocument(
+            nodes: [TextNode(id: 'a', text: AttributedText('cat cat cat'))],
+          ),
+        );
 
-      controller.find('cat');
-      controller.replaceCurrent('dog');
+        controller.find('cat');
+        controller.replaceCurrent('dog');
 
-      final node = controller.document.getNodeById('a') as TextNode;
-      expect(node.text.text, 'dog cat cat');
-      // Remaining occurrences of the query are still tracked.
-      expect(controller.matches.length, 2);
-    });
+        final node = controller.document.getNodeById('a') as TextNode;
+        expect(node.text.text, 'dog cat cat');
+        // Remaining occurrences of the query are still tracked.
+        expect(controller.matches.length, 2);
+      },
+    );
 
     test('replaceAll replaces every occurrence, including multiple matches in '
         'the same node', () {
@@ -108,25 +114,22 @@ void main() {
       expect(controller.matches, isEmpty);
     });
 
-    test(
-      'replaceAll terminates when the replacement contains the query',
-      () {
-        final controller = QuireEditorController(
-          document: MutableDocument(
-            nodes: [TextNode(id: 'a', text: AttributedText('Bob and Bob'))],
-          ),
-        );
+    test('replaceAll terminates when the replacement contains the query', () {
+      final controller = QuireEditorController(
+        document: MutableDocument(
+          nodes: [TextNode(id: 'a', text: AttributedText('Bob and Bob'))],
+        ),
+      );
 
-        controller.replaceAll('Bob', 'Bobby');
+      controller.replaceAll('Bob', 'Bobby');
 
-        final a = controller.document.getNodeById('a') as TextNode;
-        // Terminates (no infinite loop) rather than repeatedly matching the
-        // "Bob" inside the "Bobby" it just inserted. The final re-find
-        // legitimately reports "Bob" as still present, since it's a real
-        // substring of "Bobby" — this asserts termination, not zero matches.
-        expect(a.text.text, 'Bobby and Bobby');
-      },
-    );
+      final a = controller.document.getNodeById('a') as TextNode;
+      // Terminates (no infinite loop) rather than repeatedly matching the
+      // "Bob" inside the "Bobby" it just inserted. The final re-find
+      // legitimately reports "Bob" as still present, since it's a real
+      // substring of "Bobby" — this asserts termination, not zero matches.
+      expect(a.text.text, 'Bobby and Bobby');
+    });
 
     test('closeFind clears query, matches, and index', () {
       final controller = QuireEditorController(

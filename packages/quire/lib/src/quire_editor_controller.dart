@@ -126,9 +126,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       text: AttributedText(''),
       metadata: {'indent': toggle.indent + 1},
     );
-    history.execute([
-      InsertNodeRequest(newNode, afterNodeId: toggleNodeId),
-    ]);
+    history.execute([InsertNodeRequest(newNode, afterNodeId: toggleNodeId)]);
     return newNode.id;
   }
 
@@ -871,23 +869,29 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   void replaceSelectionWithNodes(List<TextNode> nodes) {
     final selection = composer.selection;
     if (selection == null || nodes.isEmpty) return;
-    if (!selection.isCollapsed) deleteSelection();
-    if (composer.selection == null) return;
-    history.execute([InsertRichContentRequest(nodes)]);
+    history.transaction(() {
+      if (!selection.isCollapsed) deleteSelection();
+      if (composer.selection == null) return;
+      history.execute([InsertRichContentRequest(nodes)]);
+    });
     final id = composer.selection?.extent.nodeId;
     if (id != null) requestFocus(id);
   }
 
   /// Replaces the current selection (deleting it first, if expanded) with
   /// [text] — used for cross-node typing and for paste. A caret-only
-  /// (collapsed) selection just inserts at that position.
-  ///
-  // ponytail: delete-then-insert is two history entries instead of one
-  // combined undo step; acceptable since it only affects the multi-node/paste
-  // path, not everyday single-character typing.
+  /// (collapsed) selection just inserts at that position. The whole
+  /// replacement — delete, then one insert/newline per pasted line — is a
+  /// single undo step.
   void replaceSelectionWithText(String text, {bool requestFocusAfter = true}) {
     final selection = composer.selection;
     if (selection == null) return;
+    history.transaction(() => _replaceSelectionWithText(selection, text));
+    final id = composer.selection?.extent.nodeId;
+    if (requestFocusAfter && id != null) requestFocus(id);
+  }
+
+  void _replaceSelectionWithText(DocumentSelection selection, String text) {
     if (!selection.isCollapsed) deleteSelection();
 
     final position = composer.selection?.extent;
@@ -914,8 +918,6 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
         );
       }
     }
-    final id = composer.selection?.extent.nodeId;
-    if (requestFocusAfter && id != null) requestFocus(id);
   }
 
   DocumentPosition _startOf(DocumentNode node) => DocumentPosition(

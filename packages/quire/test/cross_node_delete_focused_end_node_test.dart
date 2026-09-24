@@ -17,7 +17,9 @@ Future<void> _pumpEditor(
   QuireEditorController controller,
 ) async {
   await tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+    MaterialApp(
+      home: Scaffold(body: QuireEditor(controller: controller)),
+    ),
   );
 }
 

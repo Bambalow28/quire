@@ -17,7 +17,9 @@ Future<void> _pumpEditor(
   QuireEditorController controller,
 ) async {
   await tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: QuireEditor(controller: controller))),
+    MaterialApp(
+      home: Scaffold(body: QuireEditor(controller: controller)),
+    ),
   );
 }
 
@@ -68,9 +70,9 @@ void main() {
       expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
 
       final focusedId = controller.focusedNodeId!;
-      final idx = controller.document.nodesInDocumentOrder
-          .toList()
-          .indexWhere((n) => n.id == focusedId);
+      final idx = controller.document.nodesInDocumentOrder.toList().indexWhere(
+        (n) => n.id == focusedId,
+      );
       final fieldFinder = find.byType(EditableText).at(idx);
       final fieldController = tester
           .widget<EditableText>(fieldFinder)

@@ -22,9 +22,7 @@ void main() {
         });
   });
 
-  testWidgets('same-app rich copy+paste preserves bold/italic', (
-    tester,
-  ) async {
+  testWidgets('same-app rich copy+paste preserves bold/italic', (tester) async {
     final controller = QuireEditorController(
       document: MutableDocument(
         nodes: [
@@ -118,9 +116,7 @@ void main() {
           nodes: [
             TextNode(
               id: 'a',
-              text: AttributedText('bold text', [
-                AttributionSpan(_bold, 0, 4),
-              ]),
+              text: AttributedText('bold text', [AttributionSpan(_bold, 0, 4)]),
             ),
             TextNode(id: 'b', text: AttributedText('')),
           ],

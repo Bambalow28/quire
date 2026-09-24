@@ -118,7 +118,8 @@ class TextNode extends DocumentNode {
   bool get isChecked => metadata['checked'] == true;
   bool get isCollapsed => metadata['collapsed'] == true;
   String get textAlign => metadata['textAlign'] as String? ?? 'left';
-  double get lineSpacing => (metadata['lineSpacing'] as num?)?.toDouble() ?? 1.15;
+  double get lineSpacing =>
+      (metadata['lineSpacing'] as num?)?.toDouble() ?? 1.15;
 
   @override
   String get type => 'text';
