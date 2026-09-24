@@ -201,6 +201,11 @@ class _QuireEditorState extends State<QuireEditor>
     _scrollController.addListener(() {
       _hideContextMenu();
       if (_hasVisibleSelectionHandles) setState(() {});
+      if (_editorFocusNode.hasFocus) {
+        WidgetsBinding.instance.addPostFrameCallback(
+          (_) => _inputClient.pushGeometry(),
+        );
+      }
     });
     _syncAndPush();
   }
@@ -282,6 +287,14 @@ class _QuireEditorState extends State<QuireEditor>
 
   @override
   Widget build(BuildContext context) {
+    // Every rebuild can move the focused node on screen (layout, scroll —
+    // see the scroll listener — keyboard insets); keep the IME's idea of
+    // where it is current. `pushGeometry` only sends what changed.
+    if (_editorFocusNode.hasFocus) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _inputClient.pushGeometry(),
+      );
+    }
     final nodes = _visibleNodes(widget.controller.document.nodes);
     final padding = widget.padding ?? const EdgeInsets.all(16);
     // A CustomScrollView with a trailing SliverFillRemaining (rather than a

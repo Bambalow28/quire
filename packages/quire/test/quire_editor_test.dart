@@ -55,6 +55,9 @@ void main() {
     );
     await tester.pump();
 
+    // iOS sends the newline action alongside the "\n" delta for a
+    // multiline input; only one split may result.
+    await tester.testTextInput.receiveAction(TextInputAction.newline);
     await pressEnter(tester);
 
     expect(controller.document.nodes.length, 2);

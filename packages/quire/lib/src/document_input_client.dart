@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
@@ -121,12 +123,15 @@ class DocumentInputClient implements DeltaTextInputClient {
     _connection!
       ..setEditingState(_remoteValue)
       ..show();
-    _pushGeometry();
+    pushGeometry();
   }
 
   void detach() {
     _connection?.close();
     _connection = null;
+    _sentSize = null;
+    _sentTransform = null;
+    _sentCaretRect = null;
     _targetNodeId = null;
     _crossNodeMode = false;
   }
@@ -139,7 +144,25 @@ class DocumentInputClient implements DeltaTextInputClient {
   /// caret to another node all reach the keyboard, since none of them go
   /// through a delta. A no-op while a delta batch is still being applied
   /// (see [_applyingDeltas]) and while there's no open connection.
+  ///
+  /// Coalesced to one push per microtask: a compound edit (auto-link's
+  /// select-token → link → restore-caret, a transaction of several requests)
+  /// notifies once per step, and every intermediate selection pushed to the
+  /// keyboard can reset its shift/autocorrect state. Platform deltas arrive
+  /// as separate event-loop tasks, so the pending push always lands before
+  /// the next one is applied.
   void syncFromModel() {
+    if (_syncScheduled) return;
+    _syncScheduled = true;
+    scheduleMicrotask(() {
+      _syncScheduled = false;
+      _syncNow();
+    });
+  }
+
+  bool _syncScheduled = false;
+
+  void _syncNow() {
     if (_applyingDeltas || _connection == null) return;
     final expected = _expectedValue();
     // Text AND selection both unchanged: never send anything, or an active
@@ -152,7 +175,7 @@ class DocumentInputClient implements DeltaTextInputClient {
     _remoteValue = expected;
     _connection!.setEditingState(expected);
     host.onEditingStatePushed();
-    _pushGeometry();
+    pushGeometry();
   }
 
   /// The IME's current composing range for [nodeId], in that node's own
@@ -228,27 +251,38 @@ class DocumentInputClient implements DeltaTextInputClient {
     );
   }
 
-  void _pushGeometry() {
+  Size? _sentSize;
+  Matrix4? _sentTransform;
+  Rect? _sentCaretRect;
+
+  /// Tells the platform where the focused node and its caret are on screen,
+  /// so iOS/Android can place the marked-text (CJK) candidate UI and the
+  /// autocorrect bubble. The editor calls this after every frame while
+  /// focused (layout, scrolling and keyboard insets all move things); only
+  /// values that actually changed are sent.
+  void pushGeometry() {
     final connection = _connection;
     if (connection == null) return;
     final selection = host.controller.composer.selection;
-    final nodeId = selection?.extent.nodeId;
-    if (nodeId == null) return;
-    final geometry = host.editableGeometry(nodeId);
-    if (geometry != null) {
+    if (selection == null) return;
+    final geometry = host.editableGeometry(selection.extent.nodeId);
+    if (geometry == null) return;
+    if (geometry.size != _sentSize || geometry.transform != _sentTransform) {
+      _sentSize = geometry.size;
+      _sentTransform = geometry.transform;
       connection.setEditableSizeAndTransform(geometry.size, geometry.transform);
     }
-    if (selection != null) {
-      final caretRect = host.caretGlobalRect(selection.extent);
-      if (caretRect != null) {
-        final local = geometry == null
-            ? caretRect
-            : Rect.fromLTWH(0, 0, caretRect.width, caretRect.height);
-        connection
-          ..setCaretRect(local)
-          ..setComposingRect(local);
-      }
-    }
+    final caretGlobal = host.caretGlobalRect(selection.extent);
+    final inverse = Matrix4.tryInvert(geometry.transform);
+    if (caretGlobal == null || inverse == null) return;
+    // setCaretRect/setComposingRect take the editable's own local
+    // coordinates, i.e. relative to the transform sent above.
+    final caretLocal = MatrixUtils.transformRect(inverse, caretGlobal);
+    if (caretLocal == _sentCaretRect) return;
+    _sentCaretRect = caretLocal;
+    connection
+      ..setCaretRect(caretLocal)
+      ..setComposingRect(caretLocal);
   }
 
   // --- DeltaTextInputClient -------------------------------------------
@@ -441,10 +475,13 @@ class DocumentInputClient implements DeltaTextInputClient {
     // regardless.
   }
 
+  /// Deliberately ignores [TextInputAction.newline]: for a multiline input
+  /// iOS reports the Return key BOTH as this action and as a literal "\n"
+  /// insertion delta (which `_applyReplacement` already splits on), so
+  /// acting on it here too would insert two paragraphs per Return — the
+  /// same reason `EditableText` ignores it for multiline fields.
   @override
-  void performAction(TextInputAction action) {
-    if (action == TextInputAction.newline) host.insertNewline();
-  }
+  void performAction(TextInputAction action) {}
 
   @override
   void insertContent(KeyboardInsertedContent content) {}
