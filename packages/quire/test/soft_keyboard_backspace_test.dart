@@ -2,9 +2,10 @@ import 'package:flutter/material.dart' hide TableCell, TableRow;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
-// These simulate the soft-keyboard path: a field's whole text arriving
-// through `enterText` (the diff-based controller-change path), never a
-// physical key event.
+import 'support/ime.dart';
+
+// These simulate the soft-keyboard path: a delta the platform sends for the
+// focused node, never a physical key event.
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -32,9 +33,11 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      // Only 'p' is a TextNode, so it's the sole EditableText; its field
-      // already carries the sentinel from the initial model->field push.
-      await tester.enterText(find.byType(EditableText).first, '');
+      await tester.tap(findNode('p'));
+      await tester.pumpAndSettle();
+      // Backspace at offset 0 of an already-empty paragraph — the sentinel
+      // is all there is to delete.
+      await backspace(tester);
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);
@@ -75,9 +78,9 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      // Index 0 is the table's cell field, index 1 is the trailing
-      // paragraph, which already carries the sentinel.
-      await tester.enterText(find.byType(EditableText).at(1), '');
+      await tester.tap(findNode('p'));
+      await tester.pumpAndSettle();
+      await backspace(tester);
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);
@@ -105,7 +108,9 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.enterText(find.byType(EditableText).at(1), '');
+    await tester.tap(findNode('b'));
+    await tester.pumpAndSettle();
+    await backspace(tester);
     await tester.pump();
 
     expect(controller.document.nodes.length, 1);
@@ -133,12 +138,9 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      // The field carries the sentinel + typed text, exactly what a soft
-      // keyboard would report after typing "hi" at the caret.
-      await tester.enterText(
-        find.byType(EditableText).first,
-        '${kEmptyNodeSentinel}hi',
-      );
+      await tester.tap(findNode('a'));
+      await tester.pumpAndSettle();
+      await typeText(tester, 'hi');
       await tester.pump();
 
       // Exact equality is the sentinel check: a leaked sentinel would show

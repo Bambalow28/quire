@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 void main() {
   testWidgets('tapping the caret again opens the selection toolbar', (
     tester,
@@ -18,17 +20,15 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final target =
-        tester.getTopLeft(find.byType(EditableText)) + const Offset(20, 8);
+    final target = tester.getTopLeft(findNode('a')) + const Offset(20, 8);
 
     await tester.tapAt(target); // places the caret + focuses
     await tester.pumpAndSettle();
-    final state = tester.state<EditableTextState>(find.byType(EditableText));
-    expect(state.selectionOverlay?.toolbarIsVisible ?? false, isFalse);
+    expect(find.text('Select'), findsNothing);
 
-    await tester.tapAt(target); // same spot again → options
+    await tapAgain(tester, target); // same spot again → options
     await tester.pumpAndSettle();
-    expect(state.selectionOverlay?.toolbarIsVisible ?? false, isTrue);
+    expect(find.text('Select'), findsOneWidget);
   });
 
   testWidgets(
@@ -46,8 +46,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final start =
-          tester.getTopLeft(find.byType(EditableText)) + const Offset(4, 8);
+      final start = tester.getTopLeft(findNode('a')) + const Offset(4, 8);
       final end = start + const Offset(60, 0);
 
       // Touch drag-to-select starts from a long-press hold (see
@@ -68,27 +67,18 @@ void main() {
       await tester.pumpAndSettle();
 
       // The selection survives the tap (would have collapsed to a caret
-      // before this fix) and the toolbar comes up instead.
+      // before this fix) and the toolbar comes up instead, with Copy/Cut
+      // available (not just Select/Select All, which is what a collapsed
+      // caret's menu would offer).
       expect(controller.composer.selection?.isCollapsed ?? true, isFalse);
-      final state = tester.state<EditableTextState>(find.byType(EditableText));
-      expect(state.selectionOverlay?.toolbarIsVisible ?? false, isTrue);
-
-      // Not just *a* toolbar — the field's own local selection (what
-      // EditableText's built-in toolbar actually reads Cut/Copy/Paste
-      // availability from) must also still be the real non-collapsed range,
-      // or the toolbar that opens only offers Select/Select All, same as it
-      // would for a collapsed caret.
-      expect(state.textEditingValue.selection.isCollapsed, isFalse);
-      expect(
-        state.contextMenuButtonItems.map((i) => i.type),
-        contains(ContextMenuButtonType.copy),
-      );
+      expect(find.text('Copy'), findsOneWidget);
+      expect(find.text('Cut'), findsOneWidget);
     },
   );
 
   testWidgets(
     'tapping inside a selection that spans two paragraphs shows Copy/Cut '
-    'without leaving the tapped node with a local selection to double-paint',
+    'without collapsing the document-wide selection',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -105,10 +95,8 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final fieldAFinder = find.byType(EditableText).first;
-      final fieldBFinder = find.byType(EditableText).at(1);
-      final start = tester.getTopLeft(fieldAFinder) + const Offset(4, 8);
-      final end = tester.getTopLeft(fieldBFinder) + const Offset(30, 8);
+      final start = tester.getTopLeft(findNode('a')) + const Offset(4, 8);
+      final end = tester.getTopLeft(findNode('b')) + const Offset(30, 8);
 
       final gesture = await tester.startGesture(start);
       await tester.pump(const Duration(milliseconds: 600));
@@ -121,19 +109,12 @@ void main() {
       expect(selection, isNotNull);
       expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
 
-      final tapPoint = tester.getTopLeft(fieldAFinder) + const Offset(20, 8);
+      final tapPoint = tester.getTopLeft(findNode('a')) + const Offset(20, 8);
       await tester.tapAt(tapPoint);
       await tester.pumpAndSettle();
 
-      // The document-wide selection survives, and node a's own local
-      // selection stays collapsed — the fix that shows Copy/Cut here does
-      // NOT do it by giving this field a real (or cosmetic) non-collapsed
-      // local selection, which would double-paint against
-      // SelectionOverlayPainter (see _computeOverlayRects).
+      // The document-wide selection survives the tap.
       expect(controller.composer.selection?.isCollapsed ?? true, isFalse);
-      final fieldA = tester.widget<EditableText>(fieldAFinder);
-      expect(fieldA.controller.selection.isCollapsed, isTrue);
-
       expect(find.text('Copy'), findsOneWidget);
       expect(find.text('Cut'), findsOneWidget);
     },

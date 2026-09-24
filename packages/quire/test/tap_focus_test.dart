@@ -30,9 +30,13 @@ void main() {
     await tester.tapAt(Offset(editorRect.center.dx, editorRect.bottom - 20));
     await tester.pumpAndSettle();
 
-    final field = tester.widget<EditableText>(find.byType(EditableText));
-    expect(field.focusNode.hasFocus, isTrue, reason: 'bottom tap should focus');
+    expect(
+      FocusManager.instance.primaryFocus?.hasFocus,
+      isTrue,
+      reason: 'bottom tap should focus',
+    );
     expect(controller.composer.selection, isNotNull);
+    expect(controller.focusedNodeId, 'a');
   });
 
   testWidgets('focus genuinely leaving the editor for another field clears '
@@ -57,11 +61,11 @@ void main() {
       ),
     );
 
-    final editorField = find.descendant(
+    final editorNode = find.descendant(
       of: find.byType(QuireEditor),
-      matching: find.byType(EditableText),
+      matching: find.byKey(const ValueKey('quire-node-a')),
     );
-    await tester.tap(editorField.first);
+    await tester.tap(editorNode.first);
     await tester.pumpAndSettle();
     expect(controller.focusedNodeId, 'a');
 

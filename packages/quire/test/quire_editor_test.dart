@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
+
+import 'support/ime.dart';
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -25,10 +26,9 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(EditableText).first, 'hello world');
-    await tester.pump();
+    await replaceEntireText(tester, 'hello world');
 
     expect(
       (controller.document.getNodeById('a') as TextNode).text.text,
@@ -46,7 +46,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection.collapsed(
@@ -55,8 +55,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
+    await pressEnter(tester);
 
     expect(controller.document.nodes.length, 2);
     final first = controller.document.getNodeAt(0) as TextNode;
@@ -85,7 +84,7 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).at(1));
+      await tester.tap(findNode('b'));
       await tester.pumpAndSettle();
       controller.changeSelection(
         DocumentSelection.collapsed(
@@ -94,8 +93,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
-      await tester.pump();
+      await backspace(tester);
 
       expect(controller.document.nodes.length, 1);
       expect(
@@ -107,11 +105,10 @@ void main() {
   );
 
   testWidgets(
-    'a "\\n" arriving through the controller splits the node (soft-keyboard Enter)',
+    'a "\\n" arriving through a delta splits the node (soft-keyboard Enter)',
     (tester) async {
       // A soft keyboard's Return key never emits a key event — it lands as
-      // a literal "\n" inside the field's text, exactly like `enterText`
-      // simulates here.
+      // a literal "\n" insertion delta, exactly like `typeText` sends here.
       final controller = QuireEditorController(
         document: MutableDocument(
           nodes: [TextNode(id: 'a', text: AttributedText('hello world'))],
@@ -119,10 +116,15 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
-      await tester.enterText(find.byType(EditableText).first, 'hello\n world');
+      controller.changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', const TextNodePosition(5)),
+        ),
+      );
       await tester.pump();
+      await typeText(tester, '\n');
 
       expect(controller.document.nodes.length, 2);
       final first = controller.document.getNodeAt(0) as TextNode;
@@ -149,7 +151,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection(
@@ -159,10 +161,9 @@ void main() {
     );
     await tester.pump();
 
-    // Replace the bold "hello" with "howdy" in one shot (as `enterText`
-    // does for the currently-focused field).
-    await tester.enterText(find.byType(EditableText).first, 'howdy world');
-    await tester.pump();
+    // Types over the selected bold "hello" with "howdy" — same length, so
+    // the result reads "howdy world" either way.
+    await typeText(tester, 'howdy');
 
     final text = (controller.document.getNodeById('a') as TextNode).text;
     expect(text.text, 'howdy world');
@@ -182,7 +183,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection(
@@ -212,12 +213,10 @@ void main() {
     final controller = QuireEditorController(document: doc);
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(EditableText).first, 'hello world');
-    await tester.pump();
-    await tester.enterText(find.byType(EditableText).first, 'hello world!!');
-    await tester.pump();
+    await replaceEntireText(tester, 'hello world');
+    await replaceEntireText(tester, 'hello world!!');
 
     controller.undo();
     controller.undo();
@@ -281,8 +280,9 @@ void main() {
 
     expect(find.text('Start writing…'), findsOneWidget);
 
-    await tester.enterText(find.byType(EditableText).first, 'hi');
-    await tester.pump();
+    await tester.tap(findNode('a'));
+    await tester.pumpAndSettle();
+    await replaceEntireText(tester, 'hi');
 
     expect(find.text('Start writing…'), findsNothing);
   });
@@ -307,7 +307,7 @@ void main() {
     );
     expect(find.text('Start writing…'), findsOneWidget);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pump();
 
     expect(find.text('Start writing…'), findsNothing);
@@ -388,7 +388,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
     expect(controller.focusedNodeId, 'a');
 
@@ -412,8 +412,11 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    final field = tester.widget<EditableText>(find.byType(EditableText).first);
-    expect(field.style.decoration, TextDecoration.lineThrough);
+    final field = tester.widget<RichText>(
+      find.descendant(of: findNode('a'), matching: find.byType(RichText)),
+    );
+    final span = field.text as TextSpan;
+    expect(span.style?.decoration, TextDecoration.lineThrough);
   });
 
   testWidgets(

@@ -1,13 +1,22 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' hide TableCell, TableRow;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
-// Bug repro: Select All (the touch-context-menu path, which calls
-// `controller.selectAll()`) followed by a SOFT-KEYBOARD backspace — arriving
-// as a text diff through the focused field's own NodeTextController, never a
-// key event — should delete the whole document. See quire_editor.dart
-// `_onControllerChanged`'s cross-node branch and `replaceSelectionWithText`.
+import 'support/ime.dart';
+
+// Bug repro (pre-rewrite): Select All (the touch-context-menu path, which
+// calls `controller.selectAll()`) followed by a SOFT-KEYBOARD backspace —
+// arriving as a text diff through the focused field's own
+// NodeTextController, never a key event — needed to delete the whole
+// document, and a stale selection-only report from that same field's local
+// caret could not be allowed to collapse the real, cross-node
+// `composer.selection`. There is no per-node field/local selection any
+// more — `DocumentInputClient` reads `composer.selection` directly and
+// ignores selection-only deltas entirely while in cross-node mode (see
+// `document_input_client.dart`'s `_applySelectionOnly`) — so this now
+// exercises the same end-to-end behaviour through the real delta path.
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -22,9 +31,8 @@ Future<void> _pumpEditor(
 
 void main() {
   testWidgets(
-    'a selection-only report from the focused field (text unchanged) while '
-    'a multi-node selection is active must not collapse composer.selection '
-    'to that field\'s own stale local caret',
+    'a selection-only delta while a multi-node selection is active must not '
+    'collapse composer.selection to a single-node caret',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -41,7 +49,7 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       expect(controller.focusedNodeId, 'a');
 
@@ -50,14 +58,10 @@ void main() {
       final preSelection = controller.composer.selection!;
       expect(preSelection.base.nodeId, isNot(preSelection.extent.nodeId));
 
-      // The focused field's OWN controller reports a selection-only change
-      // (text unchanged) — e.g. iOS repositioning the field's local caret,
-      // or any spurious selection notification from the platform.
-      final fieldController = tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller;
-      fieldController.selection = const TextSelection.collapsed(offset: 2);
-      await tester.pump();
+      // A selection-only report while in cross-node mode — e.g. iOS
+      // repositioning the placeholder's own caret, or any spurious
+      // selection notification from the platform.
+      await moveSelection(tester, const TextSelection.collapsed(offset: 1));
 
       final postSelection = controller.composer.selection;
       expect(postSelection, isNotNull);
@@ -65,8 +69,8 @@ void main() {
         postSelection!.base.nodeId,
         isNot(postSelection.extent.nodeId),
         reason:
-            'a stale local selection-only report from one field collapsed '
-            'the document-wide selection',
+            'a stale selection-only delta collapsed the document-wide '
+            'selection',
       );
     },
   );
@@ -90,15 +94,13 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      // Focus lands in node 'a', the way a real tap-then-select-all would.
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       expect(controller.focusedNodeId, 'a');
 
       controller.selectAll();
       await tester.pump();
 
-      // Selection must span the whole document before the delete arrives.
       final preDeleteSelection = controller.composer.selection;
       expect(preDeleteSelection, isNotNull);
       expect(
@@ -106,23 +108,9 @@ void main() {
         isNot(preDeleteSelection.extent.nodeId),
         reason: 'composer.selection collapsed before the backspace arrived',
       );
-
-      // Focus (and thus which field the soft keyboard talks to) is still
-      // 'a' — selectAll() never moves it.
       expect(controller.focusedNodeId, 'a');
 
-      // The platform reports the focused field's local caret before the
-      // actual delete arrives (see the test above) — reproduces the exact
-      // sequence a real device hits.
-      final fieldController = tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller;
-      fieldController.selection = const TextSelection.collapsed(offset: 2);
-      await tester.pump();
-
-      // Soft-keyboard backspace: the OS edits the focused field's own text
-      // directly, one character shorter, with no key event at all.
-      await tester.enterText(find.byType(EditableText).first, 'on');
+      await backspace(tester);
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);
@@ -156,12 +144,12 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       controller.selectAll();
       await tester.pump();
 
-      await tester.enterText(find.byType(EditableText).first, 'X');
+      await typeText(tester, 'X');
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);
@@ -171,9 +159,10 @@ void main() {
   );
 
   testWidgets(
-    'select-all then a HARDWARE-keyboard backspace also deletes the whole '
-    'document',
+    'select-all then a HARDWARE-keyboard backspace (desktop) also deletes '
+    'the whole document',
     (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
       final controller = QuireEditorController(
         document: MutableDocument(
           nodes: [
@@ -189,7 +178,7 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       controller.selectAll();
       await tester.pump();
@@ -200,6 +189,7 @@ void main() {
       expect(controller.document.nodes.length, 1);
       final remaining = controller.document.nodes.single as TextNode;
       expect(remaining.text.text, isEmpty);
+      debugDefaultTargetPlatformOverride = null;
     },
   );
 
@@ -230,7 +220,7 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       controller.selectAll();
       await tester.pump();
@@ -242,7 +232,7 @@ void main() {
         isNot(preDeleteSelection.extent.nodeId),
       );
 
-      await tester.enterText(find.byType(EditableText).first, 'on');
+      await backspace(tester);
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);

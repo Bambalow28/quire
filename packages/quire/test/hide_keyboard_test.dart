@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 void main() {
   testWidgets(
     'the hide-keyboard button removes focus and leaves composer.selection '
@@ -25,7 +27,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       controller.changeSelection(
         DocumentSelection.collapsed(

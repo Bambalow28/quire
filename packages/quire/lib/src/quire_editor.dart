@@ -581,7 +581,7 @@ class _QuireEditorState extends State<QuireEditor>
       final localOffset = paragraph.globalToLocal(globalPosition);
       final rawOffset = paragraph.getPositionForOffset(localOffset).offset;
       // Clamp into the model's own length — an empty node renders the
-      // U+200B placeholder (see `kEmptyNodeSentinel`) and can report an
+      // U+200B render placeholder (see `text_span_builder.dart`) and can report an
       // offset the (empty) model has no such position for.
       return DocumentPosition(
         node.id,
@@ -1780,23 +1780,29 @@ class _QuireEditorState extends State<QuireEditor>
     final isFocused = _editorFocusNode.hasFocus && widget.controller.focusedNodeId == node.id;
     final composingRange = isFocused ? _inputClient.composingRangeFor(node.id) : null;
 
-    final textBlock = MouseRegion(
-      cursor: SystemMouseCursors.text,
-      child: Semantics(
-        textField: true,
-        multiline: true,
-        value: node.text.text,
-        focused: isFocused,
-        onTap: () => _placeCaret(node.id, node.text.text.length),
-        child: RichText(
-          key: paragraphKey,
-          textAlign: _textAlignFor(node),
-          textScaler: MediaQuery.textScalerOf(context),
-          text: buildAttributedTextSpan(
-            text: node.text,
-            style: style,
-            context: context,
-            composingRange: composingRange,
+    // Keyed so tests can find/tap a specific node's rendered text block
+    // without an EditableText to search for any more — see
+    // `test/support/ime.dart` and `IME_REWRITE_SPEC.md` stage 4.
+    final textBlock = KeyedSubtree(
+      key: ValueKey('quire-node-${node.id}'),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.text,
+        child: Semantics(
+          textField: true,
+          multiline: true,
+          value: node.text.text,
+          focused: isFocused,
+          onTap: () => _placeCaret(node.id, node.text.text.length),
+          child: RichText(
+            key: paragraphKey,
+            textAlign: _textAlignFor(node),
+            textScaler: MediaQuery.textScalerOf(context),
+            text: buildAttributedTextSpan(
+              text: node.text,
+              style: style,
+              context: context,
+              composingRange: composingRange,
+            ),
           ),
         ),
       ),

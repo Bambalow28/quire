@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 QuireEditorController _controller() => QuireEditorController(
   document: MutableDocument(
     nodes: [TextNode(id: 'a', text: AttributedText('hello world'))],
@@ -15,7 +17,7 @@ Future<Offset> _pump(WidgetTester tester, QuireEditorController c) async {
     ),
   );
   await tester.pumpAndSettle();
-  return tester.getTopLeft(find.byType(EditableText)) + const Offset(20, 8);
+  return tester.getTopLeft(findNode('a')) + const Offset(20, 8);
 }
 
 void main() {
@@ -33,11 +35,9 @@ void main() {
     final base = (sel.base.nodePosition as TextNodePosition).offset;
     final ext = (sel.extent.nodePosition as TextNodePosition).offset;
     expect('hello world'.substring(base, ext), 'hello');
-    final state = tester.state<EditableTextState>(find.byType(EditableText));
-    expect(
-      state.contextMenuButtonItems.map((i) => i.type),
-      containsAll([ContextMenuButtonType.cut, ContextMenuButtonType.copy]),
-    );
+    // A long-press also opens the selection toolbar with Cut/Copy.
+    expect(find.text('Cut'), findsOneWidget);
+    expect(find.text('Copy'), findsOneWidget);
   });
 
   testWidgets('double-tap selects the word under the finger', (tester) async {

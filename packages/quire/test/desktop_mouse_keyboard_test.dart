@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 Future<void> _pumpEditor(
   WidgetTester tester,
   QuireEditorController controller,
@@ -35,7 +37,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
     final at =
-        tester.getTopLeft(find.byType(EditableText).first) +
+        tester.getTopLeft(findNode('a')) +
         const Offset(40, 8);
 
     await _mouseClick(tester, at);
@@ -57,7 +59,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
     final at =
-        tester.getTopLeft(find.byType(EditableText).first) +
+        tester.getTopLeft(findNode('a')) +
         const Offset(40, 8);
 
     await _mouseClick(tester, at);
@@ -86,7 +88,7 @@ void main() {
 
     await _mouseClick(
       tester,
-      tester.getTopLeft(find.byType(EditableText).first) + const Offset(30, 8),
+      tester.getTopLeft(findNode('a')) + const Offset(30, 8),
     );
 
     final selection = controller.composer.selection;
@@ -103,7 +105,7 @@ void main() {
       ),
     );
     await _pumpEditor(tester, controller);
-    final topLeft = tester.getTopLeft(find.byType(EditableText).first);
+    final topLeft = tester.getTopLeft(findNode('a'));
 
     await _mouseClick(tester, topLeft + const Offset(4, 8));
     await _mouseClick(tester, topLeft + const Offset(70, 8));

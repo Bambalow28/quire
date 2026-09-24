@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 List<String> _texts(QuireEditorController c) =>
     c.document.nodes.whereType<TextNode>().map((n) => n.text.text).toList();
 
-Future<EditableTextState> _pumpFocusStart(
+Future<void> _pumpFocusStart(
   WidgetTester t,
   QuireEditorController c,
-  int fieldIndex,
+  String nodeId,
 ) async {
   await t.pumpWidget(
     MaterialApp(
@@ -16,34 +18,12 @@ Future<EditableTextState> _pumpFocusStart(
     ),
   );
   await t.pumpAndSettle();
-  await t.tapAt(
-    t.getTopLeft(find.byType(EditableText).at(fieldIndex)) + const Offset(2, 8),
+  await t.tap(findNode(nodeId));
+  await t.pumpAndSettle();
+  c.changeSelection(
+    DocumentSelection.collapsed(DocumentPosition(nodeId, const TextNodePosition(0))),
   );
   await t.pumpAndSettle();
-  final field = t.state<EditableTextState>(
-    find.byType(EditableText).at(fieldIndex),
-  );
-  // Caret at model offset 0 = field offset 1 (past the sentinel).
-  field.userUpdateTextEditingValue(
-    field.textEditingValue.copyWith(
-      selection: const TextSelection.collapsed(offset: 1),
-    ),
-    SelectionChangedCause.tap,
-  );
-  await t.pumpAndSettle();
-  return field;
-}
-
-/// The soft-keyboard backspace-at-start delta: the field's leading sentinel
-/// is deleted, model text otherwise unchanged, caret to field 0.
-void _softBackspaceAtStart(EditableTextState field) {
-  final v = field.textEditingValue;
-  field.updateEditingValue(
-    TextEditingValue(
-      text: v.text.substring(1),
-      selection: const TextSelection.collapsed(offset: 0),
-    ),
-  );
 }
 
 void main() {
@@ -58,8 +38,10 @@ void main() {
         ],
       ),
     );
-    final field = await _pumpFocusStart(t, c, 1);
-    _softBackspaceAtStart(field);
+    await _pumpFocusStart(t, c, 'p2');
+    // The delta actually deletes the sentinel only, not any of "two" — see
+    // `document_input_client.dart`'s `_applyDeletion`.
+    await backspace(t);
     await t.pumpAndSettle();
     expect(_texts(c), ['onetwo']);
   });
@@ -75,9 +57,8 @@ void main() {
           ],
         ),
       );
-      // The text field is the only EditableText (index 0).
-      final field = await _pumpFocusStart(t, c, 0);
-      _softBackspaceAtStart(field);
+      await _pumpFocusStart(t, c, 'p');
+      await backspace(t);
       await t.pumpAndSettle();
       expect(c.document.getNodeById('img'), isNull);
     },
@@ -97,11 +78,12 @@ void main() {
       ),
     );
     await t.pumpAndSettle();
-    await t.enterText(find.byType(EditableText).at(0), 'hello');
+    await t.tap(findNode('p'));
+    await t.pumpAndSettle();
+    await replaceEntireText(t, 'hello');
     await t.pumpAndSettle();
     // Exact equality is the sentinel check: a leaked sentinel would show up
-    // as a leading space here. (A `contains` over the JSON can't do that job
-    // any more — the sentinel is an ordinary space now.)
+    // as a leading space here.
     expect((c.document.getNodeById('p')! as TextNode).text.text, 'hello');
   });
 
@@ -122,15 +104,18 @@ void main() {
       ),
     );
     await t.pumpAndSettle();
-    // Clear the whole field (sentinel included) — a full delete, not a merge.
-    final field = t.state<EditableTextState>(find.byType(EditableText).at(1));
-    field.userUpdateTextEditingValue(
-      const TextEditingValue(
-        text: '',
-        selection: TextSelection.collapsed(offset: 0),
+    await t.tap(findNode('p2'));
+    await t.pumpAndSettle();
+    // Select this node's own text (not the sentinel) and delete it — a full
+    // clear, not a backspace-at-start merge.
+    c.changeSelection(
+      DocumentSelection(
+        base: DocumentPosition('p2', const TextNodePosition(0)),
+        extent: DocumentPosition('p2', const TextNodePosition(3)),
       ),
-      SelectionChangedCause.keyboard,
     );
+    await t.pumpAndSettle();
+    await backspace(t);
     await t.pumpAndSettle();
     expect(c.document.getNodeById('p2'), isNotNull);
     expect((c.document.getNodeById('p2')! as TextNode).text.text, '');

@@ -2,15 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
-// Bug repro: a soft-keyboard backspace over a cross-node (drag-made)
-// selection whose FOCUSED field is the selection's END node — the node
-// `_DeleteSelectionCommand` disposes via `_syncControllers`, not the one it
-// merges into. `_onControllerChanged`'s cross-node branch used to call
-// `replaceSelectionWithText` synchronously, tearing down that very
-// NodeTextController while it was still mid-notifyListeners (this callback
-// IS that notification) — the delete silently failed to apply until
-// something else (undo) forced a clean resync. See quire_editor.dart
-// `_onControllerChanged`.
+import 'support/ime.dart';
+
+// Bug repro (pre-rewrite): a soft-keyboard backspace over a cross-node
+// (drag-made) selection whose FOCUSED field was the selection's END node
+// used to tear down that very node's NodeTextController while it was still
+// mid-notifyListeners, silently failing to apply. There is no per-node
+// controller any more — this now just asserts the end-to-end behaviour still
+// holds with the new DeltaTextInputClient.
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -39,8 +38,8 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      // Focus lands on 'c' — the field the soft keyboard will talk to.
-      await tester.tap(find.byType(EditableText).last);
+      // Focus lands on 'c' — the node the soft keyboard will talk to.
+      await tester.tap(findNode('c'));
       await tester.pumpAndSettle();
       expect(controller.focusedNodeId, 'c');
 
@@ -56,12 +55,7 @@ void main() {
       await tester.pump();
       expect(controller.focusedNodeId, 'c');
 
-      // Soft-keyboard backspace: the OS edits the focused field's ('c')
-      // own text directly, one character shorter, with no key event at all.
-      await tester.enterText(find.byType(EditableText).last, 'thre');
-      await tester.pump();
-      // The delete is deferred to a microtask (see `_onControllerChanged`) —
-      // flush it.
+      await backspace(tester);
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);

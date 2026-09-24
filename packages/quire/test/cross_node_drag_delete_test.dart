@@ -2,15 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
-// Bug repro: a drag-select that starts at the very beginning of a node's
-// text (the natural way to select "from the top" of a checklist) leaves
-// that node's own field-local caret collapsed right after the leading
-// sentinel (see `_pushModelToControllers`). A soft-keyboard delete there
-// looks identical to "backspace at start of paragraph" — the sentinel is
-// gone, text otherwise unchanged — so `_onControllerChanged` routed it to
-// `mergeWithPrevious` instead of deleting the real, visible cross-node
-// selection, silently doing nothing when that node has no previous sibling
-// to merge into.
+import 'support/ime.dart';
+
+// Bug repro (pre-rewrite): a drag-select that starts at the very beginning
+// of a node's text (the natural way to select "from the top" of a
+// checklist) left that node's own field-local caret collapsed right after
+// the leading sentinel. A soft-keyboard delete there looked identical to
+// "backspace at start of paragraph", so it merged instead of deleting the
+// real, visible cross-node selection. The new DeltaTextInputClient tracks
+// cross-node mode explicitly (see `document_input_client.dart`), so this is
+// now just "does a cross-node selection delete correctly".
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -51,12 +52,8 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      final start =
-          tester.getTopLeft(find.byType(EditableText).at(0)) +
-          const Offset(2, 8);
-      final end =
-          tester.getTopLeft(find.byType(EditableText).at(2)) +
-          const Offset(4, 8);
+      final start = tester.getTopLeft(findNode('a')) + const Offset(2, 8);
+      final end = tester.getTopLeft(findNode('c')) + const Offset(4, 8);
 
       final gesture = await tester.startGesture(start);
       await tester.pump(const Duration(milliseconds: 600));
@@ -69,25 +66,8 @@ void main() {
       expect(selection, isNotNull);
       expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
 
-      final focusedId = controller.focusedNodeId!;
-      final idx = controller.document.nodesInDocumentOrder.toList().indexWhere(
-        (n) => n.id == focusedId,
-      );
-      final fieldFinder = find.byType(EditableText).at(idx);
-      final fieldController = tester
-          .widget<EditableText>(fieldFinder)
-          .controller;
-      final localSel = fieldController.selection;
-
-      // The real OS backspace with a collapsed local caret: removes ONE
-      // char before it — no key event, just a text diff.
-      final fieldText = fieldController.text;
-      final newFieldText = fieldText.replaceRange(
-        localSel.start - 1,
-        localSel.start,
-        '',
-      );
-      await tester.enterText(fieldFinder, newFieldText);
+      // A soft-keyboard delete over the (visible, cross-node) selection.
+      await backspace(tester);
       await tester.pump();
 
       expect(

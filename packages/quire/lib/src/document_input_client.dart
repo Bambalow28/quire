@@ -55,7 +55,7 @@ abstract class DocumentInputHost {
 /// space still reads as "start of sentence".
 ///
 /// This is a platform/IME-facing concept, separate from
-/// `text_span_builder.dart`'s `kEmptyNodeSentinel` (the *rendered*
+/// `text_span_builder.dart`'s private render placeholder (the
 /// placeholder for a genuinely empty node) — the two never appear together;
 /// this one exists only inside the value the keyboard sees, never on screen.
 const _imeSentinel = ' ';

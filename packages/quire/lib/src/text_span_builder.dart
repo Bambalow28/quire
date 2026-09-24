@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:quire_core/quire_core.dart';
 
-/// U+200B — painted (at real size, unlike the old field sentinel) when a
-/// text node has no text of its own, purely so it still has a line box for
-/// caret placement/height measurement. Render-only: it is never part of the
-/// model, and any hit-tested offset against it is clamped back to the
-/// model's own (zero) length by the caller.
-const kEmptyNodeSentinel = '​';
+/// U+200B — painted when a text node has no text of its own, purely so it
+/// still has a line box for caret placement/height measurement. Render-only:
+/// it is never part of the model, and any hit-tested offset against it is
+/// clamped back to the model's own (zero) length by the caller.
+///
+/// Deliberately NOT named `kEmptyNodeSentinel` — that public constant
+/// (`node_text_controller.dart`, `' '`) is a different, IME-facing concept
+/// this rewrite keeps working unchanged (see `document_input_client.dart`'s
+/// own `_imeSentinel`); this one is private and purely a rendering detail.
+const _emptyNodeRenderPlaceholder = '​';
 
 /// Builds the [TextSpan] for one [TextNode]'s rendered text: the node's own
 /// [AttributedText] styled by its attributions (bold/italic/link/etc, same
@@ -14,8 +18,9 @@ const kEmptyNodeSentinel = '​';
 /// underlined [composingRange] for the IME's current composing region.
 ///
 /// Render offsets equal model offsets exactly — there is no field-level
-/// sentinel here (contrast [kEmptyNodeSentinel], which is a stand-in
-/// *character* used only when the node is empty, not an offset shift).
+/// sentinel here (contrast [_emptyNodeRenderPlaceholder], which is a
+/// stand-in *character* used only when the node is empty, not an offset
+/// shift).
 TextSpan buildAttributedTextSpan({
   required AttributedText text,
   required TextStyle style,
@@ -23,7 +28,7 @@ TextSpan buildAttributedTextSpan({
   TextRange? composingRange,
 }) {
   if (text.text.isEmpty) {
-    return TextSpan(text: kEmptyNodeSentinel, style: style);
+    return TextSpan(text: _emptyNodeRenderPlaceholder, style: style);
   }
 
   final spans = text.spans;

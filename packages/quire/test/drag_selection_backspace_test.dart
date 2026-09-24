@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
-// Bug repro: a drag-made selection is only ever written to
-// `composer.selection` (see `_extendDocumentDragTo` in quire_editor.dart) —
-// the focused field's own local TextEditingValue.selection never moves, so
-// a physical Backspace with a same-node (not cross-node) drag selection
-// active used to fall through to `_shortcutBindings`' collapsed-caret branch
-// instead of deleting the highlighted range.
+import 'support/ime.dart';
+
+// Bug repro (pre-rewrite): a drag-made selection was only ever written to
+// `composer.selection` — the focused field's own local TextEditingValue
+// selection never moved, so a physical Backspace with a same-node
+// (not cross-node) drag selection active fell through to a collapsed-caret
+// branch instead of deleting the highlighted range. There is no per-node
+// field/local selection any more — `composer.selection` is the only
+// selection there is — so this is now just "does a same-node drag selection
+// delete correctly" through the real delta path a soft keyboard uses.
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -22,7 +25,7 @@ Future<void> _pumpEditor(
 }
 
 void main() {
-  testWidgets('physical Backspace with a same-node drag selection deletes the '
+  testWidgets('backspace with a same-node drag selection deletes the '
       'selected range, not just a stale collapsed caret', (tester) async {
     final controller = QuireEditorController(
       document: MutableDocument(
@@ -31,12 +34,10 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
 
-    // Simulates a drag-select of "world" — same-node, non-collapsed,
-    // written only to composer.selection (never the field's local one),
-    // exactly like `_extendDocumentDragTo` does for a real drag gesture.
+    // Simulates a drag-select of "world".
     controller.changeSelection(
       const DocumentSelection(
         base: DocumentPosition('a', TextNodePosition(6)),
@@ -45,7 +46,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+    await backspace(tester);
     await tester.pump();
 
     expect(

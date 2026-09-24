@@ -4,8 +4,33 @@
 // than the old `tester.enterText`/`find.byType(EditableText)` route (there
 // is no more per-node `EditableText` for those to find — see
 // `IME_REWRITE_SPEC.md` stage 4).
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+/// Finds a text node's rendered block by id — the `find.byType(EditableText)`
+/// replacement, now that a node is a keyed `RichText`/`Semantics` block
+/// rather than its own field. See the `ValueKey('quire-node-<id>')` added in
+/// `quire_editor.dart`'s `_buildTextNode`.
+Finder findNode(String nodeId) => find.byKey(ValueKey('quire-node-$nodeId'));
+
+/// A second tap at [target] guaranteed NOT to register as the second half of
+/// a double-tap, no matter how little real wall-clock time separates it from
+/// a prior touch tap — multi-tap detection reads the wall clock
+/// (`DateTime.now()`), which a widget test's fake frame clock can't
+/// fast-forward, so two `tester.tapAt` calls back-to-back always look like a
+/// double-tap in a test even when the production gesture they're standing in
+/// for (tap an existing caret again, well after the fact) never would.
+/// Uses a different pointer kind (mouse, vs `tapAt`'s touch), which the
+/// multi-click streak already treats as unrelated — lands on the exact same
+/// offset a same-position touch tap would, since layout is deterministic.
+Future<void> tapAgain(WidgetTester tester, Offset target) async {
+  final gesture = await tester.startGesture(target, kind: PointerDeviceKind.mouse);
+  await tester.pump();
+  await gesture.up();
+  await tester.pump();
+}
 
 /// The `TextInput.setClient` client id most recently seen by
 /// [WidgetTester.testTextInput] — every delta message below is addressed to
@@ -143,6 +168,29 @@ Future<void> backspace(WidgetTester tester) async {
 /// A soft-keyboard Return — arrives as a literal "\n" insertion delta, same
 /// as `TextInputAction.newline` does on a real device.
 Future<void> pressEnter(WidgetTester tester) => typeText(tester, '\n');
+
+/// Replaces the focused (single-node) field's entire real text — everything
+/// after the leading IME sentinel — with [newText], as one delta. The
+/// `tester.enterText(find.byType(EditableText)...)` replacement for a test
+/// that wants "the field now reads exactly this", not a keystroke-precise
+/// edit.
+Future<void> replaceEntireText(WidgetTester tester, String newText) async {
+  final value = trackedValue(tester);
+  const sentinelLength = 1;
+  final delta = _deltaJson(
+    oldText: value.text,
+    deltaStart: sentinelLength,
+    deltaEnd: value.text.length,
+    deltaText: newText,
+    selectionBase: sentinelLength + newText.length,
+    selectionExtent: sentinelLength + newText.length,
+  );
+  _localTrackedValue = TextEditingValue(
+    text: value.text.substring(0, sentinelLength) + newText,
+    selection: TextSelection.collapsed(offset: sentinelLength + newText.length),
+  );
+  await sendDeltas(tester, [delta]);
+}
 
 /// A selection-only (non-text) delta — a caret move or drag with no text
 /// change, same as e.g. tapping elsewhere in the same node.

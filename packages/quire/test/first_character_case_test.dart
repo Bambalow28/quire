@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 /// The editor no longer force-uppercases the first character of a node — the
 /// soft keyboard comes up shifted instead (TextCapitalization.sentences), so a
 /// deliberately lowercase first letter survives, exactly like a TextField.
-/// That only works because the field's leading sentinel is a real space: a
-/// zero-width space read as a word character to iOS/Android and killed the
+/// That only works because the IME's leading sentinel is a real space: a
+/// zero-width space reads as a word character to iOS/Android and kills the
 /// auto-shift, which is why the forced uppercase existed in the first place.
 void main() {
   testWidgets('the typed case of the first character is preserved', (
@@ -23,16 +25,16 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(EditableText).first, 'hello');
+    await replaceEntireText(tester, 'hello');
     await tester.pump();
 
     final node = controller.document.getNodeById('a') as TextNode;
     expect(node.text.text, 'hello');
   });
 
-  testWidgets('the field asks the keyboard for sentence case behind a space '
+  testWidgets('the IME asks the keyboard for sentence case behind a space '
       'sentinel, and the sentinel never reaches the model', (tester) async {
     final controller = QuireEditorController(
       document: MutableDocument(
@@ -45,10 +47,14 @@ void main() {
       ),
     );
 
-    expect(kEmptyNodeSentinel, ' ');
-    final field = tester.widget<EditableText>(find.byType(EditableText).first);
-    expect(field.textCapitalization, TextCapitalization.sentences);
-    expect(field.controller.text, kEmptyNodeSentinel);
+    await tester.tap(findNode('a'));
+    await tester.pumpAndSettle();
+
+    expect(
+      (tester.testTextInput.setClientArgs?['textCapitalization']),
+      'TextCapitalization.sentences',
+    );
+    expect(trackedValue(tester).text, ' ');
     expect((controller.document.getNodeById('a') as TextNode).text.text, '');
   });
 }
