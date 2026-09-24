@@ -1,9 +1,11 @@
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show RenderEditable;
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
+
+import 'support/ime.dart';
 
 /// Mirrors `_handleKnobDiameter` in quire_editor.dart — the knob is drawn at
 /// the very top of the start handle's rect, and that's where a finger lands.
@@ -49,7 +51,7 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pump();
 
       expect(controller.focusedNodeId, 'a');
@@ -75,7 +77,7 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      final topLeft = tester.getTopLeft(find.byType(EditableText).first);
+      final topLeft = tester.getTopLeft(findNode('a'));
       // A handful of characters in on the first (only) line — nowhere near
       // offset 0 or offset 11 for a plausible glyph width.
       await tester.tapAt(topLeft + const Offset(30, 8));
@@ -106,15 +108,11 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      final start =
-          tester.getTopLeft(find.byType(EditableText).at(0)) +
-          const Offset(4, 8);
+      final start = tester.getTopLeft(findNode('a')) + const Offset(4, 8);
       // Far enough right that it lands past the last glyph on the line,
       // clamping to the end of paragraph 3's text (so the bold check below
       // can expect the whole node, not just part of it).
-      final end =
-          tester.getTopLeft(find.byType(EditableText).at(2)) +
-          const Offset(300, 8);
+      final end = tester.getTopLeft(findNode('c')) + const Offset(300, 8);
 
       // A mouse drag selects immediately; a finger drag would scroll (see
       // the touch tests below).
@@ -179,9 +177,9 @@ void main() {
     'a selection spanning list items has no gap between the highlight rects',
     (tester) async {
       // Each list item is wrapped in its own bottom-padding for the visual
-      // gap between items — that padding sits outside the field's own
-      // RenderEditable box, so left alone the highlight would stop short of
-      // it and leave a visible unhighlighted strip between items.
+      // gap between items — that padding sits outside the node's own
+      // RenderParagraph box, so left alone the highlight would stop short
+      // of it and leave a visible unhighlighted strip between items.
       final controller = QuireEditorController(
         document: MutableDocument(
           nodes: [
@@ -247,7 +245,7 @@ void main() {
       ),
     );
     await _pumpEditor(tester, controller);
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection(
@@ -257,7 +255,7 @@ void main() {
     );
     await tester.pump();
 
-    await tester.enterText(find.byType(EditableText).first, 'X');
+    await typeText(tester, 'X');
     await tester.pump();
 
     expect(controller.document.nodes.length, 1);
@@ -280,7 +278,7 @@ void main() {
         ),
       );
       await _pumpEditor(tester, controller);
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       controller.changeSelection(
         DocumentSelection(
@@ -290,7 +288,7 @@ void main() {
       );
       await tester.pump();
 
-      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await backspace(tester);
       await tester.pump();
 
       expect(controller.document.nodes.length, 1);
@@ -317,7 +315,7 @@ void main() {
       // Focus starts in node 'b', the node the selection's extent will end
       // up removed along with — proves focus is re-derived from the
       // surviving selection afterward rather than left pointing at 'b'.
-      await tester.tap(find.byType(EditableText).at(1));
+      await tester.tap(findNode('b'));
       await tester.pumpAndSettle();
       controller.changeSelection(
         DocumentSelection(
@@ -349,7 +347,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -383,11 +381,8 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    final start =
-        tester.getTopLeft(find.byType(EditableText).at(0)) + const Offset(4, 8);
-    final end =
-        tester.getTopLeft(find.byType(EditableText).at(2)) +
-        const Offset(100, 8);
+    final start = tester.getTopLeft(findNode('a')) + const Offset(4, 8);
+    final end = tester.getTopLeft(findNode('c')) + const Offset(100, 8);
 
     final gesture = await tester.startGesture(start); // touch by default
     await tester.pump();
@@ -420,11 +415,8 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    final start =
-        tester.getTopLeft(find.byType(EditableText).at(0)) + const Offset(4, 8);
-    final end =
-        tester.getTopLeft(find.byType(EditableText).at(1)) +
-        const Offset(100, 8);
+    final start = tester.getTopLeft(findNode('a')) + const Offset(4, 8);
+    final end = tester.getTopLeft(findNode('b')) + const Offset(100, 8);
 
     final gesture = await tester.startGesture(start);
     await tester.pump(const Duration(milliseconds: 600)); // hold
@@ -469,8 +461,8 @@ void main() {
       expect(startHandle(), findsNothing);
       expect(endHandle(), findsNothing);
 
-      // Non-collapsed, confined to a single node — native handles are
-      // disabled, so quire's own handles must cover this case too.
+      // Non-collapsed, confined to a single node — quire's own handles
+      // cover this case too, not just a multi-node selection.
       controller.changeSelection(
         DocumentSelection(
           base: DocumentPosition('a', const TextNodePosition(0)),
@@ -540,9 +532,7 @@ void main() {
       expect(startHandle(), findsOneWidget);
 
       // Drag the start handle down into paragraph 'b'.
-      final target =
-          tester.getTopLeft(find.byType(EditableText).at(1)) +
-          const Offset(4, 8);
+      final target = tester.getTopLeft(findNode('b')) + const Offset(4, 8);
       final gesture = await tester.startGesture(
         tester.getCenter(startHandle()),
       );
@@ -585,9 +575,7 @@ void main() {
       expect(endHandle(), findsOneWidget);
 
       // Drag the end handle up into paragraph 'b'.
-      final target =
-          tester.getTopLeft(find.byType(EditableText).at(1)) +
-          const Offset(4, 8);
+      final target = tester.getTopLeft(findNode('b')) + const Offset(4, 8);
       final gesture = await tester.startGesture(tester.getCenter(endHandle()));
       await tester.pump();
       await gesture.moveTo(target);
@@ -603,17 +591,19 @@ void main() {
     },
   );
 
-  /// Exact screen point for [modelOffset] within [renderEditable]'s node —
+  /// Exact screen point for [modelOffset] within [renderParagraph]'s node —
   /// robust against the eyeballed-pixel-offset approach used elsewhere in
   /// this file, needed here because the crossover test below depends on
-  /// landing precisely on particular offsets partway through a drag. `+ 1`
-  /// for the field's leading sentinel (see `_emptyNodeSentinel` in
-  /// quire_editor.dart).
-  Offset pointForOffset(RenderEditable renderEditable, int modelOffset) {
-    final rect = renderEditable.getLocalRectForCaret(
-      TextPosition(offset: modelOffset + 1),
+  /// landing precisely on particular offsets partway through a drag. Render
+  /// offsets equal model offsets exactly — there is no field-level sentinel
+  /// any more (see text_span_builder.dart).
+  Offset pointForOffset(RenderParagraph renderParagraph, int modelOffset) {
+    final position = TextPosition(offset: modelOffset);
+    final caretOffset = renderParagraph.getOffsetForCaret(position, Rect.zero);
+    final caretHeight = renderParagraph.getFullHeightForCaret(position);
+    return renderParagraph.localToGlobal(
+      caretOffset + Offset(0, caretHeight / 2),
     );
-    return renderEditable.localToGlobal(rect.center);
   }
 
   testWidgets(
@@ -621,11 +611,11 @@ void main() {
     'the selection to that exact offset, leaving the end unchanged — then '
     'the end handle narrows the end, leaving the (new) start unchanged',
     (tester) async {
-      // Regression test for root cause 1: before the fix, a non-collapsed
-      // selection confined to one node had no quire-drawn handles at all
-      // (native handles were used instead, which can never move
-      // `composer.selection` — see the `selectionControls: null` comment in
-      // quire_editor.dart), so this whole scenario had nothing to drag.
+      // Regression test for root cause 1 (pre-rewrite): before the fix, a
+      // non-collapsed selection confined to one node had no quire-drawn
+      // handles at all (EditableText's own native handles were used
+      // instead, which could never move `composer.selection`), so this
+      // whole scenario had nothing to drag.
       final controller = QuireEditorController(
         document: MutableDocument(
           nodes: [TextNode(id: 'a', text: AttributedText('hello world'))],
@@ -645,9 +635,9 @@ void main() {
       expect(startHandle(), findsOneWidget);
       expect(endHandle(), findsOneWidget);
 
-      final renderEditable = tester
-          .state<EditableTextState>(find.byType(EditableText).first)
-          .renderEditable;
+      final renderParagraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: findNode('a'), matching: find.byType(RichText)),
+      );
 
       // Drag the start handle from offset 6 to offset 0 — widens the
       // selection to cover "hello world" entirely.
@@ -655,7 +645,7 @@ void main() {
         tester.getCenter(startHandle()),
       );
       await tester.pump();
-      await startGesture.moveTo(pointForOffset(renderEditable, 0));
+      await startGesture.moveTo(pointForOffset(renderParagraph, 0));
       await tester.pump();
       await startGesture.up();
       await tester.pump();
@@ -673,7 +663,7 @@ void main() {
         tester.getCenter(endHandle()),
       );
       await tester.pump();
-      await endGesture.moveTo(pointForOffset(renderEditable, 8));
+      await endGesture.moveTo(pointForOffset(renderParagraph, 8));
       await tester.pump();
       await endGesture.up();
       await tester.pump();
@@ -718,9 +708,9 @@ void main() {
       await tester.pump();
       expect(startHandle(), findsOneWidget);
 
-      final renderEditable = tester
-          .state<EditableTextState>(find.byType(EditableText).first)
-          .renderEditable;
+      final renderParagraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: findNode('a'), matching: find.byType(RichText)),
+      );
 
       final gesture = await tester.startGesture(
         tester.getCenter(startHandle()),
@@ -729,7 +719,7 @@ void main() {
       // First two moves stay short of the fixed endpoint (8); the third
       // crosses past it and keeps going.
       for (final target in [6, 10, 12]) {
-        await gesture.moveTo(pointForOffset(renderEditable, target));
+        await gesture.moveTo(pointForOffset(renderParagraph, target));
         await tester.pump();
       }
       await gesture.up();
@@ -784,9 +774,7 @@ void main() {
       // steps (like a real finger) rather than one teleporting jump — that's
       // what actually engages the ScrollView's own drag recognizer in the
       // gesture arena.
-      final target =
-          tester.getTopLeft(find.byType(EditableText).at(1)) +
-          const Offset(4, 8);
+      final target = tester.getTopLeft(findNode('p1')) + const Offset(4, 8);
       final start = tester.getCenter(startHandle());
       final gesture = await tester.startGesture(start);
       await tester.pump();
@@ -803,116 +791,6 @@ void main() {
       final (startPos, endPos) = selection!.normalize(controller.document);
       expect(startPos.nodeId, 'p1');
       expect(endPos, DocumentPosition('p2', const TextNodePosition(5)));
-    },
-  );
-
-  testWidgets(
-    'a touch that lands on a single-node selection\'s native start handle '
-    'is left alone instead of long-press jumping the selection to a '
-    'different word',
-    (tester) async {
-      // Regression test for a bug found live: with a single word selected
-      // within one paragraph, a touch near the selection's edge (where the
-      // native EditableText handle sits) used to be treated as an ordinary
-      // document-level touch, whose "nearest node above" fallback and
-      // long-press-hold word-select timer would jump the selection to an
-      // unrelated word (offset 0 of the same node) instead of leaving the
-      // native handle's own drag alone.
-      final controller = QuireEditorController(
-        document: MutableDocument(
-          nodes: [
-            TextNode(id: 'a', text: AttributedText('First paragraph here')),
-            TextNode(id: 'b', text: AttributedText('second paragraph')),
-          ],
-        ),
-      );
-      await _pumpEditor(tester, controller);
-
-      // Select "paragraph" (offsets 6-15) — non-collapsed, confined to a
-      // single node, so its handles are Flutter's own native ones.
-      controller.changeSelection(
-        DocumentSelection(
-          base: DocumentPosition('a', const TextNodePosition(6)),
-          extent: DocumentPosition('a', const TextNodePosition(15)),
-        ),
-      );
-      controller.requestFocus('a');
-      await tester.pump();
-
-      final state = tester.state<EditableTextState>(
-        find.byType(EditableText).first,
-      );
-      final renderEditable = state.renderEditable;
-      // Fields render a leading zero-width sentinel char (see
-      // `_emptyNodeSentinel`) ahead of the real text, so a field-space
-      // TextPosition is one ahead of the model offset.
-      final caretRect = renderEditable.getLocalRectForCaret(
-        const TextPosition(offset: 6 + 1),
-      );
-      final caretTopGlobal = renderEditable.localToGlobal(caretRect.topLeft);
-      // A few px above the caret's top: inside the start handle's hit
-      // region (which reaches above the line for its knob) but above the
-      // field's own render rect — exactly the touch that used to fall
-      // through to the "nearest node above" fallback.
-      final handlePoint = caretTopGlobal + const Offset(0, -5);
-
-      final gesture = await tester.startGesture(handlePoint);
-      // Long enough to fire the old word-select-on-hold timer were this
-      // touch not recognised as landing on the native handle.
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
-      await tester.pump();
-
-      final selection = controller.composer.selection!;
-      final (startPos, endPos) = selection.normalize(controller.document);
-      expect(startPos, DocumentPosition('a', const TextNodePosition(6)));
-      expect(endPos, DocumentPosition('a', const TextNodePosition(15)));
-    },
-  );
-
-  testWidgets(
-    'the same native-handle exemption holds regardless of document length '
-    '(not just a short single-paragraph document)',
-    (tester) async {
-      final nodes = List.generate(
-        20,
-        (i) => TextNode(id: 'p$i', text: AttributedText('paragraph number $i')),
-      );
-      final controller = QuireEditorController(
-        document: MutableDocument(nodes: nodes),
-      );
-      await _pumpEditor(tester, controller);
-
-      // Select "number" within the first node — single-node selection deep
-      // in a long, scrollable document.
-      controller.changeSelection(
-        DocumentSelection(
-          base: DocumentPosition('p0', const TextNodePosition(10)),
-          extent: DocumentPosition('p0', const TextNodePosition(16)),
-        ),
-      );
-      controller.requestFocus('p0');
-      await tester.pump();
-
-      final state = tester.state<EditableTextState>(
-        find.byType(EditableText).first,
-      );
-      final renderEditable = state.renderEditable;
-      final caretRect = renderEditable.getLocalRectForCaret(
-        const TextPosition(offset: 10 + 1),
-      );
-      final handlePoint =
-          renderEditable.localToGlobal(caretRect.topLeft) + const Offset(0, -5);
-
-      final gesture = await tester.startGesture(handlePoint);
-      await tester.pump(const Duration(milliseconds: 600));
-      await gesture.up();
-      await tester.pump();
-
-      final selection = controller.composer.selection!;
-      final (startPos, endPos) = selection.normalize(controller.document);
-      expect(startPos, DocumentPosition('p0', const TextNodePosition(10)));
-      expect(endPos, DocumentPosition('p0', const TextNodePosition(16)));
     },
   );
 
@@ -1011,9 +889,7 @@ void main() {
       await _pumpEditor(tester, controller);
 
       final viewport = tester.getRect(find.byType(QuireEditor));
-      final start =
-          tester.getTopLeft(find.byType(EditableText).first) +
-          const Offset(4, 4);
+      final start = tester.getTopLeft(findNode('p0')) + const Offset(4, 4);
       // A few px above the very bottom edge — inside the autoscroll margin.
       final holdPoint = Offset(start.dx, viewport.bottom - 5);
 
@@ -1127,15 +1003,11 @@ void main() {
       );
       await _pumpEditor(tester, controller);
 
-      final renderEditable = tester
-          .state<EditableTextState>(find.byType(EditableText).first)
-          .renderEditable;
-      Offset forOffset(int modelOffset) {
-        final rect = renderEditable.getLocalRectForCaret(
-          TextPosition(offset: modelOffset + 1),
-        );
-        return renderEditable.localToGlobal(rect.center);
-      }
+      final renderParagraph = tester.renderObject<RenderParagraph>(
+        find.descendant(of: findNode('a'), matching: find.byType(RichText)),
+      );
+      Offset forOffset(int modelOffset) =>
+          pointForOffset(renderParagraph, modelOffset);
 
       // Long-press in the middle of "beta" (word boundaries 6-10).
       final gesture = await tester.startGesture(forOffset(8));
@@ -1176,12 +1048,10 @@ void main() {
         ),
       );
       await _pumpEditor(tester, controller);
-      final target =
-          tester.getTopLeft(find.byType(EditableText).first) +
-          const Offset(20, 8);
+      final target = tester.getTopLeft(findNode('a')) + const Offset(20, 8);
       await tester.tapAt(target); // caret
       await tester.pumpAndSettle();
-      await tester.tapAt(target); // caret again -> caret menu
+      await tapAgain(tester, target); // caret again -> caret menu
       await tester.pumpAndSettle();
       return controller;
     }
@@ -1197,9 +1067,8 @@ void main() {
       expect(find.text('Copy'), findsOneWidget);
       expect(find.text('Cut'), findsOneWidget);
 
-      // Showing the toolbar gives the focused field its own local
-      // selection (see `_showToolbarForWholeField`) — this must not have
-      // clobbered the document-wide selection back down to that one node.
+      // Opening the toolbar for Select All must not have clobbered the
+      // document-wide selection back down to the tapped node.
       final selection = controller.composer.selection;
       expect(selection, isNotNull);
       expect(selection!.base.nodeId, isNot(selection.extent.nodeId));
