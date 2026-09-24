@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 void main() {
   // A test-only clipboard, matching rich_clipboard_test.dart's setup.
   late String stored;
@@ -84,7 +86,7 @@ void main() {
           home: Scaffold(body: QuireEditor(controller: controller)),
         ),
       );
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pump();
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -119,7 +121,7 @@ void main() {
         home: Scaffold(body: QuireEditor(controller: controller)),
       ),
     );
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pump();
 
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
@@ -178,7 +180,7 @@ void main() {
     // the full row width, and only the linked text itself should be
     // clickable (see _linkUrlAtGlobalPosition's doc comment).
     await tester.tapAt(
-      tester.getTopLeft(find.byType(EditableText).first) + const Offset(5, 5),
+      tester.getTopLeft(findNode('a')) + const Offset(5, 5),
     );
     await tester.pumpAndSettle();
 
@@ -233,7 +235,7 @@ void main() {
     );
 
     // Far to the right of "hi", still well within the field's full-width row.
-    final topLeft = tester.getTopLeft(find.byType(EditableText).first);
+    final topLeft = tester.getTopLeft(findNode('a'));
     await tester.tapAt(topLeft + const Offset(200, 5));
     await tester.pumpAndSettle();
 

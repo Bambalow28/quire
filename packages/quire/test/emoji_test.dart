@@ -6,6 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'support/ime.dart';
+
 void main() {
   testWidgets(
     'the Emoji option opens a picker; picking one inserts it at the caret',
@@ -122,8 +124,9 @@ void main() {
   );
 
   testWidgets(
-    'a field selection landing mid-emoji (as a tap can, via raw hit-testing) '
-    'snaps forward, past the emoji, instead of splitting its surrogate pair',
+    'a selection-only delta landing mid-emoji (as a tap can, via raw '
+    'hit-testing) snaps forward, past the emoji, instead of splitting its '
+    'surrogate pair',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -135,17 +138,12 @@ void main() {
           home: Scaffold(body: QuireEditor(controller: controller)),
         ),
       );
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
 
-      // Model text "Hi 😀": H=0 i=1 ' '=2 😀=3..5. Field offsets add 1 for
-      // the leading sentinel (see quire_editor.dart's `_toField`/`_toModel`).
-      final fieldController = tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller;
-
-      fieldController.selection = const TextSelection.collapsed(offset: 5);
-      await tester.pump();
+      // Model text "Hi 😀": H=0 i=1 ' '=2 😀=3..5. IME/field offsets add 1
+      // for the leading sentinel (see document_input_client.dart).
+      await moveSelection(tester, const TextSelection.collapsed(offset: 5));
       expect(
         controller.composer.selection,
         DocumentSelection.collapsed(
@@ -158,8 +156,7 @@ void main() {
             'snaps forward, past the emoji, not back in front of it',
       );
 
-      fieldController.selection = const TextSelection.collapsed(offset: 6);
-      await tester.pump();
+      await moveSelection(tester, const TextSelection.collapsed(offset: 6));
       expect(
         controller.composer.selection,
         DocumentSelection.collapsed(
@@ -171,8 +168,8 @@ void main() {
   );
 
   testWidgets(
-    'a soft-keyboard backspace after tapping past the end of a line that '
-    'ends in an emoji removes the emoji, not the space in front of it',
+    'a soft-keyboard backspace after the caret lands mid-emoji removes the '
+    'emoji, not the space in front of it',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -191,31 +188,15 @@ void main() {
           home: Scaffold(body: QuireEditor(controller: controller)),
         ),
       );
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
 
       // What a real iOS field reports for a tap anywhere past the end of the
-      // line: field offset 5 — between the emoji's two surrogates — never the
-      // full-length 6.
-      tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller
-          .selection = const TextSelection.collapsed(
-        offset: 5,
-      );
-      await tester.pump();
+      // line: field offset 5 — between the emoji's two surrogates — never
+      // the full-length 6.
+      await moveSelection(tester, const TextSelection.collapsed(offset: 5));
 
-      // The soft keyboard deletes from ITS copy of the text, at ITS caret.
-      final platform = tester.testTextInput.editingState!;
-      final text = platform['text'] as String;
-      final caret = platform['selectionBase'] as int;
-      final deleted = text.substring(0, caret - 1) + text.substring(caret);
-      tester.testTextInput.updateEditingValue(
-        TextEditingValue(
-          text: deleted,
-          selection: TextSelection.collapsed(offset: caret - 1),
-        ),
-      );
+      await backspace(tester);
       await tester.pump();
 
       final node = controller.document.getNodeById('a')! as TextNode;
@@ -224,8 +205,7 @@ void main() {
   );
 
   testWidgets(
-    'backspacing right after a picked emoji removes the whole emoji, even '
-    'when the caret got there via a tap instead of typing',
+    'backspacing right after a picked emoji removes the whole emoji',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -245,8 +225,9 @@ void main() {
         ),
       );
 
-      await tester.enterText(find.byType(EditableText).first, 'Hi ');
-      await tester.pump();
+      await tester.tap(findNode('a'));
+      await tester.pumpAndSettle();
+      await typeText(tester, 'Hi ');
 
       await tester.tap(find.byTooltip('More options'));
       await tester.pumpAndSettle();
@@ -261,47 +242,10 @@ void main() {
 
       // The panel stays open after picking (see insertEmoji's doc comment),
       // so tapping back into the field is how focus normally returns.
-      final fieldController = tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller;
+      await tester.tap(findNode('a'));
+      await tester.pumpAndSettle();
 
-      // No pump between the tap and the injected race below: quire's own
-      // `_placeCaret` already ran synchronously as part of dispatching the
-      // pointer-up event, and its correction (see the pointer-up handler's
-      // plain-tap branch in quire_editor.dart) is scheduled for the *next*
-      // frame — this is the window where EditableText's own internal tap
-      // recognizer, which resolves the gesture arena asynchronously rather
-      // than synchronously with quire's, can still race in and overwrite
-      // the field's local selection with its own (potentially mid-emoji)
-      // offset.
-      await tester.tap(find.byType(EditableText).first);
-      final resolved = fieldController.selection;
-
-      // Simulate that race: EditableText's own recognizer landing a raw,
-      // un-snapped offset that splits the emoji's surrogate pair. Left
-      // uncorrected, a Backspace right after this would only remove half
-      // the emoji instead of the whole thing.
-      fieldController.selection = const TextSelection.collapsed(offset: 0);
-      await tester.pump();
-
-      // The scheduled re-snap should have corrected the race back to
-      // exactly what quire's own tap handling resolved, before Backspace is
-      // ever pressed.
-      expect(fieldController.selection, resolved);
-
-      // Whatever the tap actually resolved to, move it explicitly to right
-      // after the emoji — this asserts the *outcome* Backspace should
-      // produce from there, independent of exactly where a default tap on
-      // this render box happens to land.
-      final endOffset = fieldController.text.length;
-      fieldController.selection = TextSelection.collapsed(offset: endOffset);
-      controller.changeSelection(
-        DocumentSelection.collapsed(
-          DocumentPosition('a', TextNodePosition(endOffset - 1)),
-        ),
-      );
-
-      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await backspace(tester);
       await tester.pump();
 
       final node = controller.document.getNodeById('a')! as TextNode;
@@ -321,23 +265,16 @@ void main() {
         home: Scaffold(body: QuireEditor(controller: controller)),
       ),
     );
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
 
-    // Field text is the sentinel + "Hi 😀" (see quire_editor.dart's
-    // `_fieldTextFor`). Simulate the platform's own soft-keyboard delete
-    // clipping only the emoji's trailing low surrogate — as observed on a
-    // real device — rather than the whole 2-unit character, leaving a
-    // dangling high surrogate the model must still recover from.
-    final fieldController = tester
-        .widget<EditableText>(find.byType(EditableText).first)
-        .controller;
-    final fieldText = fieldController.text;
-    final partiallyDeleted = fieldText.substring(0, fieldText.length - 1);
-    fieldController.value = TextEditingValue(
-      text: partiallyDeleted,
-      selection: TextSelection.collapsed(offset: partiallyDeleted.length),
-    );
+    // A real device has been observed to report the platform's own
+    // soft-keyboard delete as clipping only the emoji's trailing low
+    // surrogate — one UTF-16 code unit — rather than the whole 2-unit
+    // character; `backspace()` sends exactly that (one code unit back from
+    // the caret), and `document_input_client.dart`'s grapheme expansion
+    // must still recover the whole emoji from it.
+    await backspace(tester);
     await tester.pump();
 
     final node = controller.document.getNodeById('a')! as TextNode;
@@ -446,8 +383,9 @@ void main() {
   );
 
   testWidgets(
-    'inserting an emoji from the panel leaves a ghost caret where the next '
-    'insert will land, since the panel deliberately keeps real focus away',
+    'inserting an emoji from the panel leaves a caret overlay where the '
+    'next insert will land, since the panel deliberately keeps real focus '
+    'away',
     (tester) async {
       final controller = QuireEditorController(
         document: MutableDocument(
@@ -467,14 +405,8 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('quire-ghost-caret')),
-        findsNothing,
-        reason:
-            'the native cursor is already showing while the field has real focus',
-      );
 
       await tester.tap(find.byTooltip('More options'));
       await tester.pumpAndSettle();
@@ -488,21 +420,21 @@ void main() {
       await tester.pump();
       // Nothing paints on this very first pump — not even at the stale
       // (pre-insert) position `_caretRectAt` would compute if read straight
-      // from `RenderEditable` here. Painting that stale rect immediately,
+      // from the render object here. Painting that stale rect immediately,
       // then correcting it once layout catches up, is exactly the visible
       // "appears before the emoji, jumps to after it" bug this guards
-      // against; see `_scheduleGhostCaretMeasurement`'s doc comment.
+      // against; see `_scheduleCaretMeasurement`'s doc comment.
       expect(
-        find.byKey(const ValueKey('quire-ghost-caret')),
+        find.byKey(const ValueKey('quire-caret')),
         findsNothing,
         reason:
             'the rect is deferred to a post-frame measurement, not painted '
-            'from this frame\'s (still stale) RenderEditable geometry',
+            'from this frame\'s (still stale) layout geometry',
       );
       await tester.pump();
 
       expect(
-        find.byKey(const ValueKey('quire-ghost-caret')),
+        find.byKey(const ValueKey('quire-caret')),
         findsOneWidget,
         reason:
             'no field has real focus once the panel is open, so nothing '
@@ -516,9 +448,9 @@ void main() {
     'reopens, not just while it stays open',
     (tester) async {
       // Desktop: closing the panel hands focus back immediately via
-      // `requestFocus` (no software keyboard to animate back up first) —
-      // the same `requestFocus`-driven path a real device takes, without
-      // this test needing to fake a keyboard-rise animation to get there.
+      // `requestFocus` (no software keyboard to animate back up first), and
+      // exercises the physical-key backspace path (see the `isDesktop`
+      // branch in quire_editor.dart's `_shortcutBindings`).
       debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
 
       // Pre-populated with the same 'largeEmoji' attribution `insertEmoji`
@@ -557,31 +489,12 @@ void main() {
 
       // Open the panel (drops real focus) then close it (hands real focus
       // back via `QuireEditorController.requestFocus`, not a tap) — the
-      // exact transition the bug report described as breaking backspace,
-      // as opposed to leaving the panel open the whole time.
+      // exact transition the original bug report described as breaking
+      // backspace, as opposed to leaving the panel open the whole time.
       await tester.tap(find.byIcon(Icons.add));
       await tester.pump();
       await tester.tap(find.byIcon(Icons.close));
-      // One pump: `_maybeRequestFocus` grants real focus and schedules its
-      // own re-sync for the *next* frame.
-      await tester.pump();
-
-      // Simulate the race `_maybeRequestFocus`'s post-frame re-sync exists
-      // to correct: on a real device, gaining real focus here runs through
-      // EditableText's own internal focus-change handling and/or a platform
-      // IME echo, either of which can overwrite the field's local selection
-      // with something that has no idea where the model's grapheme-safe
-      // caret actually is — a plain widget test's synthetic focus grant
-      // doesn't reproduce that echo on its own, so it's injected directly.
-      final fieldController = tester
-          .widget<EditableText>(find.byType(EditableText).first)
-          .controller;
-      fieldController.selection = TextSelection.collapsed(
-        offset: fieldController.text.length - 1,
-      );
-      // The scheduled re-sync should correct this back before Backspace is
-      // ever pressed.
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pump();

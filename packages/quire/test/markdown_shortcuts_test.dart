@@ -2,14 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 // Typing a markdown prefix + space converts the paragraph. These
-// drive the field the way the soft keyboard does — a whole new field text
-// via `enterText`, diffed by the controller-change path in quire_editor.dart
-// — since that's the one hook both hardware and soft-keyboard typing share.
-// The trigger only fires on the keystroke that types the *trailing space*
-// as a pure single-character insert, so tests that want it to fire type the
-// prefix and the space as two separate `enterText` calls, exactly like a
-// real keystroke-by-keystroke session would produce.
+// drive the field the way the soft keyboard does — deltas, diffed by
+// `document_input_client.dart` — since that's the one hook both hardware and
+// soft-keyboard typing share. The trigger only fires on the keystroke that
+// types the *trailing space* as a pure single-character insert, so tests
+// that want it to fire type the prefix and the space as two separate steps,
+// exactly like a real keystroke-by-keystroke session would produce.
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -22,17 +23,24 @@ Future<void> _pumpEditor(
   );
 }
 
-/// Types [textBeforeSpace], then types a trailing space as its own
-/// keystroke — the only shape that triggers a markdown/auto-link shortcut.
+/// Types [textBeforeSpace] (with [suffix] already after it, uninterrupted),
+/// then inserts a space right after [textBeforeSpace] as its own keystroke —
+/// the only shape that triggers a markdown/auto-link shortcut.
 Future<void> _typeThenSpace(
   WidgetTester tester,
   String textBeforeSpace, {
   String suffix = '',
 }) async {
-  final field = find.byType(EditableText).first;
-  await tester.enterText(field, textBeforeSpace + suffix);
+  await tester.tap(findNode('a'));
+  await tester.pumpAndSettle();
+  await replaceEntireText(tester, textBeforeSpace + suffix);
   await tester.pump();
-  await tester.enterText(field, '$textBeforeSpace $suffix');
+  const sentinelLength = 1;
+  await moveSelection(
+    tester,
+    TextSelection.collapsed(offset: sentinelLength + textBeforeSpace.length),
+  );
+  await typeText(tester, ' ');
   await tester.pump();
   await tester.pump();
 }

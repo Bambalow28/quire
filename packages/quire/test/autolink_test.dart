@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 // A bare URL token followed by a space gets auto-linked. Same
 // two-keystroke shape as the markdown shortcut tests — the trailing space
 // has to arrive as its own pure single-character insert to trigger it.
@@ -18,10 +20,11 @@ Future<void> _pumpEditor(
 }
 
 Future<void> _typeThenSpace(WidgetTester tester, String textBeforeSpace) async {
-  final field = find.byType(EditableText).first;
-  await tester.enterText(field, textBeforeSpace);
+  await tester.tap(findNode('a'));
+  await tester.pumpAndSettle();
+  await replaceEntireText(tester, textBeforeSpace);
   await tester.pump();
-  await tester.enterText(field, '$textBeforeSpace ');
+  await typeText(tester, ' ');
   await tester.pump();
   await tester.pump();
 }
