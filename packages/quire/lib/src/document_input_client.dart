@@ -108,6 +108,7 @@ class DocumentInputClient implements DeltaTextInputClient {
   void attach() {
     if (_connection != null) return;
     _remoteValue = _expectedValue();
+    _resetLines();
     _connection = TextInput.attach(
       this,
       TextInputConfiguration(
@@ -164,7 +165,20 @@ class DocumentInputClient implements DeltaTextInputClient {
 
   void _syncNow() {
     if (_applyingDeltas || _connection == null) return;
+    // The platform's text can span several nodes after Return (see
+    // [_lines]). While it still matches the model exactly, keep it: pushing
+    // a fresh single-node value after every Return raced keystrokes the
+    // platform had already applied against the old one (fast/hardware
+    // typing put characters on the wrong line). Only the selection may
+    // need correcting.
+    final kept = _selectionWithinLines();
+    if (kept != null) {
+      if (kept == _remoteValue.selection) return;
+      _push(_remoteValue.copyWith(selection: kept, composing: TextRange.empty));
+      return;
+    }
     final expected = _expectedValue();
+    _resetLines();
     // Text AND selection both unchanged: never send anything, or an active
     // composing region gets clobbered for no reason (e.g. a rebuild from an
     // unrelated `notifyListeners` while mid-composition).
@@ -172,23 +186,71 @@ class DocumentInputClient implements DeltaTextInputClient {
         expected.selection == _remoteValue.selection) {
       return;
     }
-    _remoteValue = expected;
-    _connection!.setEditingState(expected);
+    _push(expected);
+  }
+
+  void _push(TextEditingValue value) {
+    _remoteValue = value;
+    _connection!.setEditingState(value);
     host.onEditingStatePushed();
     pushGeometry();
+  }
+
+  /// The platform selection for the model's selection, if the platform's
+  /// multi-line text ([_lines]) still mirrors the model exactly — `null`
+  /// when it has diverged (an undo, a merge, a markdown shortcut stripping
+  /// its prefix, a tap into a node outside it) and a fresh value must be
+  /// pushed instead.
+  TextSelection? _selectionWithinLines() {
+    if (_crossNodeMode || _lines.isEmpty) return null;
+    if (_lines.first.start != _imeSentinel.length) return null;
+    final document = host.controller.document;
+    final text = StringBuffer(_imeSentinel);
+    for (final (i, line) in _lines.indexed) {
+      final node = document.getNodeById(line.nodeId);
+      if (node is! TextNode || line.base != 0) return null;
+      if (i > 0) text.write('\n');
+      if (text.length != line.start) return null;
+      text.write(node.text.text);
+    }
+    if (text.toString() != _remoteValue.text) return null;
+    final selection = host.controller.composer.selection;
+    if (selection == null) return null;
+    final base = _platformOffset(selection.base);
+    final extent = _platformOffset(selection.extent);
+    if (base == null || extent == null) return null;
+    return TextSelection(baseOffset: base, extentOffset: extent);
+  }
+
+  int? _platformOffset(DocumentPosition position) {
+    final offset = position.nodePosition;
+    if (offset is! TextNodePosition) return null;
+    for (final line in _lines) {
+      if (line.nodeId == position.nodeId) {
+        return line.start + offset.offset - line.base;
+      }
+    }
+    return null;
   }
 
   /// The IME's current composing range for [nodeId], in that node's own
   /// model coordinates — `null` unless [nodeId] is the single node
   /// [_remoteValue] currently targets and its composing range is real.
   TextRange? composingRangeFor(String nodeId) {
-    if (_crossNodeMode || _targetNodeId != nodeId) return null;
     final composing = _remoteValue.composing;
-    if (!composing.isValid || composing.isCollapsed) return null;
-    return TextRange(
-      start: (composing.start - _imeSentinel.length).clamp(0, 1 << 30),
-      end: (composing.end - _imeSentinel.length).clamp(0, 1 << 30),
-    );
+    if (_crossNodeMode || !composing.isValid || composing.isCollapsed) {
+      return null;
+    }
+    final node = host.controller.document.getNodeById(nodeId);
+    if (node is! TextNode) return null;
+    for (final line in _lines) {
+      if (line.nodeId != nodeId) continue;
+      final start = line.base + composing.start - line.start;
+      final end = line.base + composing.end - line.start;
+      if (start < 0 || end > node.text.text.length) return null;
+      return TextRange(start: start, end: end);
+    }
+    return null;
   }
 
   // --- Building the IME's virtual text from the model ---------------------
@@ -290,174 +352,259 @@ class DocumentInputClient implements DeltaTextInputClient {
   @override
   void updateEditingValueWithDeltas(List<TextEditingDelta> textEditingDeltas) {
     _applyingDeltas = true;
+    if (_lines.isEmpty) _resetLines();
     try {
       for (final delta in textEditingDeltas) {
         _applyDelta(delta);
       }
     } finally {
       _applyingDeltas = false;
+      if (_staleBatch) {
+        // The platform diverged from what this client tracked; forget the
+        // line mapping so the sync below pushes a fresh, authoritative value.
+        _staleBatch = false;
+        _lines = const [];
+      }
     }
     syncFromModel();
   }
 
+  /// How the platform's text maps onto nodes while a delta batch is being
+  /// applied. Normally that's one line: the target node, starting right
+  /// after the sentinel. But one batch can carry several keystrokes,
+  /// Return included (a hardware keyboard, or fast typing, easily fills
+  /// one): once a "\n" has split the node, the rest of the batch addresses
+  /// the platform's text *after* that newline, which is a different node
+  /// now. Each line: where it starts in the platform text, its node, and
+  /// the model offset that start corresponds to.
+  List<({int start, String nodeId, int base})> _lines = const [];
+
+  void _resetLines() {
+    final id = _targetNodeId;
+    _lines = id == null || _crossNodeMode
+        ? const []
+        : [(start: _imeSentinel.length, nodeId: id, base: 0)];
+  }
+
+  /// The model position the platform offset [offset] refers to.
+  DocumentPosition _locate(int offset) {
+    var line = _lines.first;
+    for (final l in _lines) {
+      if (l.start <= offset) line = l;
+    }
+    final node = host.controller.document.getNodeById(line.nodeId);
+    final length = node is TextNode ? node.text.text.length : 0;
+    final modelOffset = (line.base + offset - line.start).clamp(0, length);
+    return DocumentPosition(line.nodeId, TextNodePosition(modelOffset));
+  }
+
+  /// Re-derives [_lines] from the platform's text after an edit that may
+  /// have split or joined nodes: the first line keeps its node, and each
+  /// following line is the next text node in document order — the model
+  /// was just edited to mirror exactly those newlines.
+  void _rebuildLines() {
+    final first = _lines.first;
+    final text = _remoteValue.text;
+    final lines = [first];
+    final following = host.controller.document.nodesInDocumentOrder
+        .whereType<TextNode>()
+        .skipWhile((n) => n.id != first.nodeId)
+        .skip(1)
+        .iterator;
+    for (var i = text.indexOf('\n', first.start); i != -1;) {
+      if (!following.moveNext()) break;
+      lines.add((start: i + 1, nodeId: following.current.id, base: 0));
+      i = text.indexOf('\n', i + 1);
+    }
+    _lines = lines;
+  }
+
   void _applyDelta(TextEditingDelta delta) {
-    // Track the platform's own value first (mirrors what a non-delta
-    // `updateEditingValue` would leave `TextEditingController` holding) —
-    // every branch below reasons from this, not from a value recomputed off
-    // the model, since the model hasn't caught up with this delta yet.
+    // Track the platform's own value first — every branch below reasons
+    // from what the platform believes, not from a value recomputed off the
+    // model, since the model hasn't caught up with this delta yet.
     final previous = _remoteValue;
-    _remoteValue = delta.apply(_remoteValue);
+    if (_staleBatch || delta.oldText != previous.text) {
+      _applyStale(delta);
+      return;
+    }
+    _remoteValue = delta.apply(previous);
+
+    final (TextRange range, String text) = switch (delta) {
+      TextEditingDeltaInsertion() => (
+        TextRange.collapsed(delta.insertionOffset),
+        delta.textInserted,
+      ),
+      TextEditingDeltaDeletion() => (delta.deletedRange, ''),
+      TextEditingDeltaReplacement() => (
+        delta.replacedRange,
+        delta.replacementText,
+      ),
+      _ => (TextRange.empty, ''),
+    };
+
+    if (_crossNodeMode) {
+      // The platform only holds a placeholder standing in for the real,
+      // multi-node selection: any edit over it edits that selection.
+      if (delta is TextEditingDeltaNonTextUpdate) return;
+      if (text.isEmpty) {
+        host.controller.deleteSelection();
+      } else {
+        host.controller.replaceSelectionWithText(text);
+      }
+      // Whatever happens next in this batch is typed into the result; the
+      // platform's placeholder is gone, so the sentinel line maps to the
+      // caret's node from here on.
+      final caret = host.controller.composer.selection?.extent;
+      final caretOffset = caret?.nodePosition;
+      if (caret != null && caretOffset is TextNodePosition) {
+        _crossNodeMode = false;
+        _lines = [
+          (
+            start: range.start + text.length,
+            nodeId: caret.nodeId,
+            base: caretOffset.offset,
+          ),
+        ];
+      }
+      return;
+    }
+    if (_lines.isEmpty) return;
 
     if (delta is TextEditingDeltaNonTextUpdate) {
       _applySelectionOnly(delta.selection);
       return;
     }
-    if (delta is TextEditingDeltaDeletion) {
-      _applyDeletion(previous, delta.deletedRange);
-      return;
-    }
-    if (delta is TextEditingDeltaInsertion) {
-      _applyReplacement(
-        previous,
-        TextRange.collapsed(delta.insertionOffset),
-        delta.textInserted,
-      );
-      return;
-    }
-    if (delta is TextEditingDeltaReplacement) {
-      _applyReplacement(previous, delta.replacedRange, delta.replacementText);
-      return;
-    }
-  }
 
-  /// A selection/composing-only report — a caret drag, or the platform
-  /// repositioning within its own composing region. Ignored in cross-node
-  /// mode: this field's own text is only a placeholder there, so a
-  /// selection report against it carries no real information about the
-  /// document-wide selection (see `_expectedValue`'s cross-node branch).
-  void _applySelectionOnly(TextSelection selection) {
-    if (_crossNodeMode) return;
-    final nodeId = _targetNodeId;
-    if (nodeId == null) return;
-    final node = host.controller.document.getNodeById(nodeId);
-    if (node is! TextNode) return;
-    final modelLength = node.text.text.length;
-    // A selection ending at offset 0 sits ON the sentinel — clamp to model 0
-    // rather than treating it as "before the document".
-    int toModel(int fieldOffset) => _snapToGraphemeBoundary(
-      node.text.text,
-      (fieldOffset - _imeSentinel.length).clamp(0, modelLength),
-    );
-    host.controller.changeSelection(
-      DocumentSelection(
-        base: DocumentPosition(
-          nodeId,
-          TextNodePosition(toModel(selection.baseOffset)),
-        ),
-        extent: DocumentPosition(
-          nodeId,
-          TextNodePosition(toModel(selection.extentOffset)),
-        ),
-      ),
-    );
-  }
-
-  void _applyDeletion(TextEditingValue before, TextRange deletedRange) {
-    if (_crossNodeMode) {
-      host.controller.deleteSelection();
-      return;
-    }
-    final nodeId = _targetNodeId;
-    if (nodeId == null) return;
-    final node = host.controller.document.getNodeById(nodeId);
-    if (node is! TextNode) return;
-
-    // The deletion includes the sentinel and removes nothing else — the
-    // only thing a soft keyboard can express for "backspace at the very
-    // start of this paragraph".
-    if (deletedRange.start == 0 && deletedRange.end == _imeSentinel.length) {
-      host.controller.mergeWithPrevious(nodeId);
+    // Backspace over the sentinel: the only thing a soft keyboard can
+    // express for "backspace at the very start of this paragraph".
+    if (text.isEmpty &&
+        range.start == 0 &&
+        range.end == _imeSentinel.length &&
+        _lines.first.start == _imeSentinel.length) {
+      _mergeFirstLineWithPrevious();
       return;
     }
 
-    var start = (deletedRange.start - _imeSentinel.length).clamp(
-      0,
-      node.text.text.length,
-    );
-    var end = (deletedRange.end - _imeSentinel.length).clamp(
-      0,
-      node.text.text.length,
-    );
-    // iOS's own soft-keyboard delete isn't reliably grapheme-aware for a
-    // custom TextInputClient — widen a pure deletion to the enclosing
-    // grapheme cluster(s) so a picked emoji's surrogate pair (or a longer
-    // ZWJ sequence) goes as one character, not half of one.
-    final (expandedStart, expandedEnd) = _expandToGraphemeClusters(
-      node.text.text,
-      start,
-      end,
-    );
-    start = expandedStart;
-    end = expandedEnd;
-    if (end <= start) return;
-    host.controller.replaceText(
-      nodeId: nodeId,
-      start: start,
-      end: end,
-      insertedText: '',
-    );
-  }
-
-  void _applyReplacement(
-    TextEditingValue before,
-    TextRange range,
-    String text,
-  ) {
-    if (_crossNodeMode) {
-      host.controller.replaceSelectionWithText(text);
-      return;
-    }
-    final nodeId = _targetNodeId;
-    if (nodeId == null) return;
-    final node = host.controller.document.getNodeById(nodeId);
-    if (node is! TextNode) return;
-    final modelLength = node.text.text.length;
-    final start = (range.start - _imeSentinel.length).clamp(0, modelLength);
-    final end = (range.end - _imeSentinel.length).clamp(0, modelLength);
-
-    if (!text.contains('\n')) {
+    final start = _locate(range.start);
+    final end = _locate(range.end);
+    if (start.nodeId == end.nodeId && !text.contains('\n')) {
+      final nodeId = start.nodeId;
+      final node = host.controller.document.getNodeById(nodeId);
+      if (node is! TextNode) return;
+      var from = (start.nodePosition as TextNodePosition).offset;
+      var to = (end.nodePosition as TextNodePosition).offset;
+      if (text.isEmpty) {
+        // iOS's own soft-keyboard delete isn't reliably grapheme-aware for
+        // a custom TextInputClient — widen a pure deletion to the enclosing
+        // grapheme cluster(s) so a picked emoji's surrogate pair (or a
+        // longer ZWJ sequence) goes as one character, not half of one.
+        (from, to) = _expandToGraphemeClusters(node.text.text, from, to);
+        if (to <= from) return;
+      }
       host.controller.replaceText(
         nodeId: nodeId,
-        start: start,
-        end: end,
+        start: from,
+        end: to,
         insertedText: text,
       );
       return;
     }
-    // A soft keyboard's Return key sends no key event — with
-    // TextInputAction.newline it lands here as a literal "\n" in a delta.
-    // Split it into insertNewline() calls so it splits the node the same
-    // way a physical Enter does, instead of leaving a raw newline inside
-    // one node's text.
-    final segments = text.split('\n');
-    host.controller.replaceText(
-      nodeId: nodeId,
-      start: start,
-      end: end,
-      insertedText: segments.first,
+
+    // Inserting a "\n" (a soft keyboard's Return sends no key event — it
+    // lands here as a literal newline), or deleting across one: express it
+    // as a document selection and let the controller split/merge nodes
+    // exactly as a physical Enter/Backspace would.
+    host.controller.changeSelection(
+      DocumentSelection(base: start, extent: end),
     );
-    for (var i = 1; i < segments.length; i++) {
-      host.insertNewline();
-      final currentNodeId = host.controller.focusedNodeId;
-      if (currentNodeId != null && segments[i].isNotEmpty) {
-        host.controller.replaceText(
-          nodeId: currentNodeId,
-          start: 0,
-          end: 0,
-          insertedText: segments[i],
-        );
-      }
+    if (text.isEmpty) {
+      host.controller.deleteSelection();
+    } else {
+      host.controller.replaceSelectionWithText(text, requestFocusAfter: false);
     }
+    _rebuildLines();
+  }
+
+  bool _staleBatch = false;
+
+  /// A delta built against a platform value this client no longer tracks —
+  /// the platform applied it before our last [setEditingState] reached it
+  /// (typing faster than a push round-trip). Its offsets can't be trusted,
+  /// but its intent can: replay it at the model's caret, as the keystrokes
+  /// they were. The rest of the batch follows the same path, and a fresh
+  /// value is pushed once it's done.
+  void _applyStale(TextEditingDelta delta) {
+    _staleBatch = true;
+    final (TextRange range, String text) = switch (delta) {
+      TextEditingDeltaInsertion() => (
+        TextRange.collapsed(delta.insertionOffset),
+        delta.textInserted,
+      ),
+      TextEditingDeltaDeletion() => (delta.deletedRange, ''),
+      TextEditingDeltaReplacement() => (
+        delta.replacedRange,
+        delta.replacementText,
+      ),
+      _ => (TextRange.empty, ''),
+    };
+    if (!range.isValid) return;
+    final removed = delta.oldText.substring(range.start, range.end);
+    for (var i = 0; i < removed.characters.length; i++) {
+      host.controller.backspaceAtCaret();
+    }
+    if (text.isNotEmpty) {
+      host.controller.replaceSelectionWithText(text, requestFocusAfter: false);
+    }
+  }
+
+  void _mergeFirstLineWithPrevious() {
+    final first = _lines.first;
+    final document = host.controller.document;
+    TextNode? previousNode;
+    for (final n in document.nodesInDocumentOrder) {
+      if (n.id == first.nodeId) break;
+      if (n is TextNode) previousNode = n;
+    }
+    final previousLength = previousNode?.text.text.length ?? 0;
+    host.controller.mergeWithPrevious(first.nodeId);
+    // The platform's text lost its sentinel, so every line starts one
+    // earlier; if the node really merged away, its line now continues the
+    // node it merged into.
+    final merged = document.getNodeById(first.nodeId) == null;
+    _lines = [
+      for (final (i, l) in _lines.indexed)
+        i == 0 && merged && previousNode != null
+            ? (start: 0, nodeId: previousNode.id, base: previousLength)
+            : (start: l.start - 1, nodeId: l.nodeId, base: l.base),
+    ];
+  }
+
+  /// A selection/composing-only report — a caret drag, or the platform
+  /// repositioning within its own composing region.
+  void _applySelectionOnly(TextSelection selection) {
+    if (!selection.isValid) return;
+    DocumentPosition snapped(int offset) {
+      final position = _locate(offset);
+      final node = host.controller.document.getNodeById(position.nodeId);
+      if (node is! TextNode) return position;
+      return DocumentPosition(
+        position.nodeId,
+        TextNodePosition(
+          _snapToGraphemeBoundary(
+            node.text.text,
+            (position.nodePosition as TextNodePosition).offset,
+          ),
+        ),
+      );
+    }
+
+    host.controller.changeSelection(
+      DocumentSelection(
+        base: snapped(selection.baseOffset),
+        extent: snapped(selection.extentOffset),
+      ),
+    );
   }
 
   // --- TextInputClient ------------------------------------------------

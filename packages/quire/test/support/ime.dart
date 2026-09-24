@@ -226,3 +226,67 @@ Future<void> moveSelection(WidgetTester tester, TextSelection selection) async {
   _localTrackedValue = value.copyWith(selection: selection);
   await sendDeltas(tester, [delta]);
 }
+
+/// Types [text] one character per delta, all in ONE platform batch — what a
+/// hardware keyboard or fast typing delivers, and the only shape where a
+/// "\n" mid-batch changes which node the following deltas land in.
+/// A '\b' in [text] is a backspace.
+Future<void> typeBatch(WidgetTester tester, String text) async {
+  var value = trackedValue(tester);
+  final deltas = <Map<String, dynamic>>[];
+  for (final ch in text.split('')) {
+    final caret = value.selection.baseOffset;
+    if (ch == '\b') {
+      deltas.add(
+        _deltaJson(
+          oldText: value.text,
+          deltaStart: caret - 1,
+          deltaEnd: caret,
+          deltaText: '',
+          selectionBase: caret - 1,
+          selectionExtent: caret - 1,
+        ),
+      );
+      value = TextEditingValue(
+        text: value.text.replaceRange(caret - 1, caret, ''),
+        selection: TextSelection.collapsed(offset: caret - 1),
+      );
+    } else {
+      deltas.add(
+        _deltaJson(
+          oldText: value.text,
+          deltaStart: caret,
+          deltaEnd: caret,
+          deltaText: ch,
+          selectionBase: caret + 1,
+          selectionExtent: caret + 1,
+        ),
+      );
+      value = TextEditingValue(
+        text: value.text.replaceRange(caret, caret, ch),
+        selection: TextSelection.collapsed(offset: caret + 1),
+      );
+    }
+  }
+  _localTrackedValue = value;
+  await sendDeltas(tester, deltas);
+}
+
+/// Sends one insertion delta built against [staleText] instead of the value
+/// the editor last pushed — a keystroke the platform applied before the
+/// editor's latest `setEditingState` reached it.
+Future<void> sendStaleInsertion(
+  WidgetTester tester, {
+  required String staleText,
+  required int at,
+  required String text,
+}) => sendDeltas(tester, [
+  _deltaJson(
+    oldText: staleText,
+    deltaStart: at,
+    deltaEnd: at,
+    deltaText: text,
+    selectionBase: at + text.length,
+    selectionExtent: at + text.length,
+  ),
+]);

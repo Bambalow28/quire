@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:characters/characters.dart';
 import 'package:flutter/foundation.dart';
@@ -867,7 +868,11 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     final node = document.getNodeById(nodeId);
     if (node is! TextNode || node.blockType != 'paragraph') return false;
     if (isInsideTable(nodeId)) return false;
-    if (start > node.text.text.length) return false;
+    // The trigger space must still be there (the microtask this runs in can
+    // follow further edits from the same IME batch).
+    if (start >= node.text.text.length || node.text.text[start] != ' ') {
+      return false;
+    }
     final prefix = node.text.text.substring(0, start);
 
     // The whole node — not just the prefix before the caret — must be
@@ -904,10 +909,34 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
 
     // One undo step for "strip the prefix + convert the block (+ check the
     // task)" — separate from the literal typing's own step recorded above.
+    // The caret usually sits right after the trigger space, but when
+    // several keystrokes arrived in one IME batch ("- milk⏎bread" at once)
+    // it's already further along — possibly in a later paragraph. Put it
+    // back on the same character (shifted left by the stripped prefix when
+    // it's in this node) rather than snapping to this node's start, or the
+    // next keystroke lands in the wrong place.
+    final caret = composer.selection;
+    DocumentPosition shifted(DocumentPosition p) {
+      final offset = p.nodePosition;
+      if (p.nodeId != nodeId || offset is! TextNodePosition) return p;
+      return DocumentPosition(
+        nodeId,
+        TextNodePosition(math.max(0, offset.offset - (start + 1))),
+      );
+    }
+
     history.transaction(() {
       replaceText(nodeId: nodeId, start: 0, end: start + 1, insertedText: '');
       applyBlockType(blockType);
       if (checked) history.execute([ToggleTaskCheckedRequest(nodeId)]);
+      if (caret != null) {
+        changeSelection(
+          DocumentSelection(
+            base: shifted(caret.base),
+            extent: shifted(caret.extent),
+          ),
+        );
+      }
     });
     return true;
   }

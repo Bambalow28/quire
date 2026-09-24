@@ -199,4 +199,121 @@ void main() {
       expect(tester.testTextInput.isVisible, isTrue);
     },
   );
+
+  testWidgets('one delta batch with Returns fills each new paragraph', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('xy'))],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(2)),
+      ),
+    );
+    controller.requestFocus('a');
+    await tester.pump();
+
+    // Seen on the iOS simulator's hardware keyboard: everything landed in
+    // the first paragraph and the new ones stayed empty.
+    await typeBatch(tester, '1\nmilk\n\neggs');
+    await tester.pump();
+
+    List<String> texts() => controller.document.nodes
+        .whereType<TextNode>()
+        .map((n) => n.text.text)
+        .toList();
+    expect(texts(), ['xy1', 'milk', '', 'eggs']);
+
+    // Backspacing past a paragraph start within one batch merges it into
+    // the (empty) paragraph above, and typing continues there.
+    await typeBatch(tester, '\b\b\b\b\bX');
+    await tester.pump();
+    expect(texts(), ['xy1', 'milk', 'X']);
+  });
+
+  testWidgets('a keystroke built against a stale platform value lands at '
+      'the caret', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('ab'))],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(2)),
+      ),
+    );
+    controller.requestFocus('a');
+    await tester.pump();
+
+    await sendStaleInsertion(tester, staleText: ' zzzz', at: 5, text: 'c');
+    await tester.pump();
+
+    expect((controller.document.getNodeById('a') as TextNode).text.text, 'abc');
+    expect(tester.testTextInput.editingState!['text'], ' abc');
+  });
+
+  testWidgets('"- milk" arriving in one batch becomes a bullet with the '
+      'caret still after "milk"', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    controller.requestFocus('a');
+    await tester.pump();
+
+    await typeBatch(tester, '- milk');
+    await tester.pump();
+    await typeBatch(tester, 's');
+    await tester.pump();
+
+    final node = controller.document.getNodeById('a') as TextNode;
+    expect(node.blockType, 'listItemUnordered');
+    expect(node.text.text, 'milks');
+  });
+
+  testWidgets('two markdown shortcuts in one batch keep every keystroke in '
+      'place', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    controller.requestFocus('a');
+    await tester.pump();
+
+    await typeBatch(tester, '- milk\n[] e');
+    await tester.pump();
+    await typeBatch(tester, 'ggs');
+    await tester.pump();
+
+    // (plus the trailing paragraph Quire keeps after a list)
+    final nodes = controller.document.nodes
+        .whereType<TextNode>()
+        .take(2)
+        .toList();
+    expect(nodes.map((n) => n.text.text), ['milk', 'eggs']);
+    expect(nodes.map((n) => n.blockType), [
+      'listItemUnordered',
+      'listItemTask',
+    ]);
+  });
 }

@@ -1592,10 +1592,6 @@ class _QuireEditorState extends State<QuireEditor>
   /// never here too.
   Map<ShortcutActivator, VoidCallback> _shortcutBindings(String nodeId) {
     final bindings = <ShortcutActivator, VoidCallback>{
-      const SingleActivator(LogicalKeyboardKey.enter):
-          widget.controller.insertNewline,
-      const SingleActivator(LogicalKeyboardKey.numpadEnter):
-          widget.controller.insertNewline,
       const SingleActivator(LogicalKeyboardKey.keyB, meta: true):
           widget.controller.toggleBold,
       const SingleActivator(LogicalKeyboardKey.keyB, control: true):
@@ -1679,6 +1675,18 @@ class _QuireEditorState extends State<QuireEditor>
       TargetPlatform.android ||
       TargetPlatform.fuchsia => false,
     };
+    // Enter follows the same rule as Backspace. On iOS/Android a hardware
+    // key event reaches this handler immediately, but the characters typed
+    // just before it arrive later, as IME deltas — so splitting here would
+    // land ahead of text the user typed first ("x⏎y" came out as "⏎xy",
+    // seen on the iOS simulator). Unhandled, the platform delivers Enter as
+    // a "\n" delta in order with the rest (see `_applyReplacement`).
+    if (isDesktop) {
+      bindings[const SingleActivator(LogicalKeyboardKey.enter)] =
+          widget.controller.insertNewline;
+      bindings[const SingleActivator(LogicalKeyboardKey.numpadEnter)] =
+          widget.controller.insertNewline;
+    }
     final docSelection = widget.controller.composer.selection;
     if (isDesktop && docSelection != null && !docSelection.isCollapsed) {
       bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
