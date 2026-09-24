@@ -2,6 +2,8 @@ import 'package:flutter/material.dart' hide TableCell, TableRow;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 /// Holds the `Future` [showInsertTableDialog] returns. A plain field (not a
 /// direct `return` of the pending future) — returning a still-pending Future
 /// from an `async` function makes Dart implicitly await it, which would
@@ -151,7 +153,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('a'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection.collapsed(

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 Future<void> _pumpEditor(
   WidgetTester tester,
   QuireEditorController controller,
@@ -73,7 +75,7 @@ void main() {
       expect(find.text('Enter text...'), findsOneWidget);
       // Just the title field — pressing Enter is what reveals content, not
       // simply inserting the callout.
-      expect(find.byType(EditableText), findsOneWidget);
+      expect(findAllNodes, findsOneWidget);
     },
   );
 
@@ -95,7 +97,7 @@ void main() {
       await _pumpEditor(tester, controller);
 
       expect(find.text('Enter text...'), findsNothing);
-      expect(find.byType(EditableText), findsOneWidget);
+      expect(findAllNodes, findsOneWidget);
     },
   );
 
@@ -123,7 +125,7 @@ void main() {
     controller.insertNewline();
     await tester.pump();
 
-    expect(find.byType(EditableText), findsNWidgets(2));
+    expect(findAllNodes, findsNWidgets(2));
     final nodes = controller.document.nodesInDocumentOrder.toList();
     expect(nodes, hasLength(2));
     expect((nodes[1] as TextNode).indent, 1);
@@ -172,13 +174,15 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    final titleField = tester.widget<EditableText>(
-      find.byType(EditableText).first,
+    final titleField = tester.widget<RichText>(
+      find.descendant(of: findNode('callout'), matching: find.byType(RichText)),
     );
-    final contentField = tester.widget<EditableText>(
-      find.byType(EditableText).at(1),
+    final contentField = tester.widget<RichText>(
+      find.descendant(of: findNode('child'), matching: find.byType(RichText)),
     );
-    expect(contentField.style.fontSize, lessThan(titleField.style.fontSize!));
+    final titleStyle = (titleField.text as TextSpan).style!;
+    final contentStyle = (contentField.text as TextSpan).style!;
+    expect(contentStyle.fontSize, lessThan(titleStyle.fontSize!));
   });
 
   testWidgets('a callout with content renders a bordered container', (

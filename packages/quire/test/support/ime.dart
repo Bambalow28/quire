@@ -15,6 +15,13 @@ import 'package:flutter_test/flutter_test.dart';
 /// `quire_editor.dart`'s `_buildTextNode`.
 Finder findNode(String nodeId) => find.byKey(ValueKey('quire-node-$nodeId'));
 
+/// Every text node's rendered block currently in the tree — the
+/// `find.byType(EditableText)` replacement for a test that wants a COUNT of
+/// rendered nodes rather than one specific node's.
+final Finder findAllNodes = find.byWidgetPredicate(
+  (widget) => widget.key is ValueKey<String> && (widget.key! as ValueKey<String>).value.startsWith('quire-node-'),
+);
+
 /// A second tap at [target] guaranteed NOT to register as the second half of
 /// a double-tap, no matter how little real wall-clock time separates it from
 /// a prior touch tap — multi-tap detection reads the wall clock

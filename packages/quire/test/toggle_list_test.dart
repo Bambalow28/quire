@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 Future<void> _pumpEditor(
   WidgetTester tester,
   QuireEditorController controller,
@@ -13,12 +15,11 @@ Future<void> _pumpEditor(
   );
 }
 
-/// Node text renders inside `EditableText` fields, not plain `Text` widgets
-/// — `find.text()` can't see it, so collapse/expand is verified against each
-/// live field's own controller text instead.
-bool _isRendered(WidgetTester tester, String text) => tester
-    .widgetList<EditableText>(find.byType(EditableText))
-    .any((w) => w.controller.text.contains(text));
+/// Node text renders inside plain `RichText` blocks — `find.text()` needs
+/// `findRichText: true` to see it (the default only matches `Text`/
+/// `EditableText`).
+bool _isRendered(WidgetTester tester, String text) =>
+    find.textContaining(text, findRichText: true).evaluate().isNotEmpty;
 
 void main() {
   testWidgets(
@@ -342,12 +343,14 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    final titleField = tester.widget<EditableText>(
-      find.byType(EditableText).first,
+    final titleField = tester.widget<RichText>(
+      find.descendant(of: findNode('toggle'), matching: find.byType(RichText)),
     );
-    final contentField = tester.widget<EditableText>(
-      find.byType(EditableText).at(1),
+    final contentField = tester.widget<RichText>(
+      find.descendant(of: findNode('child'), matching: find.byType(RichText)),
     );
-    expect(contentField.style.fontSize, lessThan(titleField.style.fontSize!));
+    final titleStyle = (titleField.text as TextSpan).style!;
+    final contentStyle = (contentField.text as TextSpan).style!;
+    expect(contentStyle.fontSize, lessThan(titleStyle.fontSize!));
   });
 }

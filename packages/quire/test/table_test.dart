@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 TextNode _para(String id, String text) =>
     TextNode(id: id, text: AttributedText(text));
 
@@ -42,7 +44,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    expect(find.byType(EditableText), findsNWidgets(4));
+    expect(findAllNodes, findsNWidgets(4));
   });
 
   testWidgets('typing in a cell updates that cell\'s node in the model', (
@@ -53,9 +55,9 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).at(1));
+    await tester.tap(findNode('t_r0c1'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(EditableText).at(1), 'edited');
+    await replaceEntireText(tester, 'edited');
     await tester.pump();
 
     final table = controller.document.getNodeById('t') as TableNode;
@@ -68,7 +70,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('t_r0c0'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection.collapsed(
@@ -95,7 +97,7 @@ void main() {
     );
     await _pumpEditor(tester, controller);
 
-    await tester.tap(find.byType(EditableText).first);
+    await tester.tap(findNode('t_r0c0'));
     await tester.pumpAndSettle();
     controller.changeSelection(
       DocumentSelection.collapsed(
@@ -131,7 +133,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       controller.changeSelection(
         DocumentSelection.collapsed(
@@ -182,10 +184,10 @@ void main() {
     await _pumpEditor(tester, controller);
 
     // 3 cells total (one merged spanning row 0, two plain in row 1).
-    expect(find.byType(EditableText), findsNWidgets(3));
+    expect(findAllNodes, findsNWidgets(3));
 
     final mergedSize = tester.getSize(find.byType(TableGrid));
-    final bottomRowCellSize = tester.getSize(find.byType(EditableText).at(1));
+    final bottomRowCellSize = tester.getSize(findNode('b'));
     // The merged cell's row spans the full table width; a single bottom-row
     // cell is roughly half of it (minus its own padding).
     expect(bottomRowCellSize.width, lessThan(mergedSize.width));
@@ -303,7 +305,7 @@ void main() {
       await _pumpEditor(tester, controller);
       expect(_horizontalScrollView(), findsOneWidget);
 
-      final cellCenter = tester.getCenter(find.byType(EditableText).first);
+      final cellCenter = tester.getCenter(findNode('t_r0c0'));
       final gesture = await tester.startGesture(
         cellCenter,
         kind: PointerDeviceKind.touch,

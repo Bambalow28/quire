@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
+import 'support/ime.dart';
+
 void main() {
   /// Everything but bold/italic/underline and text size now lives behind the
   /// bar's `+` button, so these tests open that panel first.
@@ -367,7 +369,7 @@ void main() {
         ),
       );
 
-      await tester.tap(find.byType(EditableText).first);
+      await tester.tap(findNode('a'));
       await tester.pumpAndSettle();
       final editorFocus = FocusManager.instance.primaryFocus!;
       expect(editorFocus.hasFocus, isTrue);

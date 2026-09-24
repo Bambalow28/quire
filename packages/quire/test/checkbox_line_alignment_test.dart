@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
+
+import 'support/ime.dart';
 
 Future<void> _pumpEditor(
   WidgetTester tester,
@@ -19,40 +22,38 @@ Future<void> _pumpEditor(
   await tester.pump();
 }
 
-/// The real vertical extent of the first line of text inside the node's
-/// `EditableText` — measured via `RenderEditable.getBoxesForSelection` (real
-/// layout), never derived from `fontSize`.
+/// The real vertical extent of the first line of text inside node 'a''s
+/// rendered block — measured via `RenderParagraph.getBoxesForSelection`
+/// (real layout), never derived from `fontSize`.
 (double top, double bottom) _firstLineExtent(WidgetTester tester) {
-  final state = tester.state<EditableTextState>(
-    find.byType(EditableText).first,
+  final renderParagraph = tester.renderObject<RenderParagraph>(
+    find.descendant(of: findNode('a'), matching: find.byType(RichText)),
   );
-  final renderEditable = state.renderEditable;
-  // Two characters starting just past the leading sentinel stay within line 1
-  // regardless of wrapping, and a TextBox's height for any run within one line
-  // equals that line's own box height. Skipping the sentinel matters: it is a
-  // hairline style run of its own, and measuring it here as well as in the
-  // editor would move this expectation in step with the bug it exists to
-  // catch.
-  final boxes = renderEditable
-      .getBoxesForSelection(const TextSelection(baseOffset: 1, extentOffset: 3))
+  // Two characters stay within line 1 regardless of wrapping (render
+  // offsets equal model offsets — there is no field-level sentinel to skip
+  // any more), and a TextBox's height for any run within one line equals
+  // that line's own box height.
+  final boxes = renderParagraph
+      .getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: 2))
       .where((b) => b.bottom - b.top > 1)
       .toList();
   final box = boxes.first;
-  final topLeft = renderEditable.localToGlobal(Offset(box.left, box.top));
-  final bottomLeft = renderEditable.localToGlobal(Offset(box.left, box.bottom));
+  final topLeft = renderParagraph.localToGlobal(Offset(box.left, box.top));
+  final bottomLeft = renderParagraph.localToGlobal(Offset(box.left, box.bottom));
   return (topLeft.dy, bottomLeft.dy);
 }
 
 /// Where the alphabetic baseline falls inside a line box, as a fraction of
 /// that box's height — read off the very [TextStyle] the editor handed its
-/// `EditableText`, so this uses the font's real ascent rather than assuming
+/// `RichText`, so this uses the font's real ascent rather than assuming
 /// one. A fraction, not a distance, because it gets applied to the real
 /// rendered line, which at a line spacing above 1 is not always as tall as a
 /// lone synthetic one.
 double _baselineFraction(WidgetTester tester) {
-  final style = tester
-      .widget<EditableText>(find.byType(EditableText).first)
-      .style;
+  final richText = tester.widget<RichText>(
+    find.descendant(of: findNode('a'), matching: find.byType(RichText)),
+  );
+  final style = (richText.text as TextSpan).style!;
   final painter = TextPainter(
     text: TextSpan(text: 'x', style: style),
     textDirection: TextDirection.ltr,
@@ -141,7 +142,7 @@ void main() {
         ),
       );
       await _pumpEditor(tester, controller);
-      final fieldRect = tester.getRect(find.byType(EditableText).first);
+      final fieldRect = tester.getRect(findNode('a'));
       final (lineTop, lineBottom) = _firstLineExtent(tester);
       expect(
         fieldRect.height,
