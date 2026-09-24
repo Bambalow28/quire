@@ -222,6 +222,18 @@ class _QuireEditorState extends State<QuireEditor>
     if (_editorFocusNode.hasFocus) {
       final id = widget.controller.focusedNodeId ?? _firstTextNodeId();
       if (id != null) widget.controller.focusNode(id);
+      // Every real gesture path (tap, word/paragraph select, `_focusLastNodeAtEnd`)
+      // sets a selection before it requests focus — but a caller that goes
+      // straight to `QuireEditorController.requestFocus` with no selection
+      // yet (a bare programmatic focus) would otherwise leave the IME with
+      // no node to target: default to that node's start so typing works
+      // immediately instead of silently doing nothing until some other
+      // selection change arrives.
+      if (widget.controller.composer.selection == null && id != null) {
+        widget.controller.changeSelection(
+          DocumentSelection.collapsed(DocumentPosition(id, const TextNodePosition(0))),
+        );
+      }
       widget.controller.hideGhostCaret = false;
       _inputClient.attach();
     } else {
@@ -1356,6 +1368,12 @@ class _QuireEditorState extends State<QuireEditor>
 
   @override
   void requestKeepCaretVisible() => _keepCaretVisible();
+
+  @override
+  DocumentPosition? resolveGlobalOffset(Offset globalOffset) => _positionAt(globalOffset);
+
+  @override
+  void showContextMenu() => _showContextMenu();
 
   // --- Hardware keyboard ---------------------------------------------------
 
