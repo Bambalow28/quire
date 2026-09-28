@@ -273,6 +273,12 @@ const _headingBlockTypes = {
 /// `toggleList` (collapsible) and `callout` (a bordered box, always
 /// expanded). Enter-key behavior on the title line, and on an empty content
 /// line, is the same for both.
+const _listBlockTypes = {
+  'listItemUnordered',
+  'listItemOrdered',
+  'listItemTask',
+};
+
 const _containerBlockTypes = {'toggleList', 'callout'};
 
 /// Whether [node] is nested — directly or transitively — under a
@@ -338,6 +344,20 @@ class _InsertNewlineCommand extends EditCommand {
         // of nesting yet another empty line — mirrors the outliner "second
         // Enter exits the list" convention.
         node.metadata['indent'] = node.indent - 1;
+        executor.emit(DocumentEdited([node.id]));
+        executor.emit(SelectionChanged());
+        return;
+      }
+
+      if (node.text.text.isEmpty && (_listBlockTypes.contains(node.blockType) ||
+              node.blockType == 'blockquote')) {
+        // Enter on an empty list/quote line ends it (Apple Notes): step out
+        // one level if nested, else back to a plain paragraph.
+        if (node.indent > 0) {
+          node.metadata = {...node.metadata, 'indent': node.indent - 1};
+        } else {
+          node.metadata = _metadataForBlockType(node, 'paragraph');
+        }
         executor.emit(DocumentEdited([node.id]));
         executor.emit(SelectionChanged());
         return;
@@ -764,6 +784,17 @@ class _MergeWithPreviousNodeCommand extends EditCommand {
           executor.emit(DocumentEdited([node.id]));
         }
       }
+      return;
+    }
+
+    if (node is TextNode && _listBlockTypes.contains(node.blockType)) {
+      // Backspace at the start of a list line removes the list format first
+      // (outdent if nested, else plain paragraph) — it only merges into the
+      // line above on the next press, as in Apple Notes.
+      node.metadata = node.indent > 0
+          ? {...node.metadata, 'indent': node.indent - 1}
+          : _metadataForBlockType(node, 'paragraph');
+      executor.emit(DocumentEdited([node.id]));
       return;
     }
 

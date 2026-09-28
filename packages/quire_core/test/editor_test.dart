@@ -740,6 +740,66 @@ void main() {
     expect(second.blockType, 'listItemTask');
     expect(second.isChecked, isFalse);
   });
+
+  test('Enter on an empty list item ends the list', () {
+    for (final type in ['listItemTask', 'listItemUnordered']) {
+      final doc = MutableDocument(
+        nodes: [
+          _para('a', 'x', metadata: {'blockType': type}),
+          _para('b', '', metadata: {'blockType': type, 'checked': true}),
+        ],
+      );
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('b', const TextNodePosition(0)),
+        ),
+      );
+      _editor(doc, composer).execute([InsertNewlineRequest()]);
+      expect(doc.nodes.length, 2);
+      final b = doc.getNodeById('b') as TextNode;
+      expect(b.blockType, 'paragraph');
+      expect(b.metadata.containsKey('checked'), isFalse);
+      expect(composer.selection!.extent.nodeId, 'b');
+    }
+  });
+
+  test('Enter on an empty nested list item outdents first', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para('a', '', metadata: {'blockType': 'listItemTask', 'indent': 1}),
+      ],
+    );
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    _editor(doc, composer).execute([InsertNewlineRequest()]);
+    final a = doc.getNodeById('a') as TextNode;
+    expect(a.blockType, 'listItemTask');
+    expect(a.indent, 0);
+  });
+
+  test('Backspace at the start of a list line drops the list before merging', () {
+    final doc = MutableDocument(
+      nodes: [
+        _para('a', 'one'),
+        _para('b', 'two', metadata: {'blockType': 'listItemUnordered'}),
+      ],
+    );
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('b', const TextNodePosition(0)),
+      ),
+    );
+    final editor = _editor(doc, composer);
+    editor.execute([MergeWithPreviousNodeRequest('b')]);
+    expect(doc.nodes.length, 2);
+    expect((doc.getNodeById('b') as TextNode).blockType, 'paragraph');
+    editor.execute([MergeWithPreviousNodeRequest('b')]);
+    expect(doc.nodes.length, 1);
+    expect((doc.getNodeById('a') as TextNode).text.text, 'onetwo');
+  });
 }
 
 class _ThrowingRequest extends EditRequest {}
