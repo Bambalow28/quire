@@ -369,7 +369,9 @@ class _InsertNewlineCommand extends EditCommand {
       node.text = left;
 
       final secondMetadata = Map<String, Object?>.from(node.metadata);
-      if (_headingBlockTypes.contains(node.blockType)) {
+      // Enter at the very start of a heading pushes it down intact (an empty
+      // line opens above); only a split mid/end-of-heading yields a paragraph.
+      if (_headingBlockTypes.contains(node.blockType) && offset > 0) {
         secondMetadata['blockType'] = 'paragraph';
       }
       if (node.blockType == 'listItemTask') {

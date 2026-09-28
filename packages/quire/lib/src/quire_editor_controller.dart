@@ -393,6 +393,14 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   // --- Requests used by the editor widget's node syncing -------------------
 
   void insertNewline() {
+    // Enter over a selection replaces it, as typing does.
+    if (composer.selection?.isCollapsed == false) {
+      history.transaction(() {
+        deleteSelection();
+        insertNewline();
+      });
+      return;
+    }
     // A bare URL followed by Enter gets auto-linked, same as by a space
     // (see [replaceText]). Its own undo step, before the newline's.
     final selection = composer.selection;

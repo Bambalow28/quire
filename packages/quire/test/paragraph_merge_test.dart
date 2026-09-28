@@ -29,6 +29,24 @@ Future<void> _pumpFocusStart(
 }
 
 void main() {
+  testWidgets('Enter over a selection replaces it', (t) async {
+    final c = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'p1', text: AttributedText('hello world'))],
+      ),
+    );
+    await _pumpFocusStart(t, c, 'p1');
+    c.changeSelection(
+      DocumentSelection(
+        base: DocumentPosition('p1', const TextNodePosition(5)),
+        extent: DocumentPosition('p1', const TextNodePosition(11)),
+      ),
+    );
+    c.insertNewline();
+    await t.pumpAndSettle();
+    expect(_texts(c), ['hello', '']);
+  });
+
   testWidgets('soft-keyboard backspace merges a non-empty paragraph up', (
     t,
   ) async {

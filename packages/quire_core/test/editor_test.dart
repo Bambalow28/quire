@@ -800,6 +800,20 @@ void main() {
     expect(doc.nodes.length, 1);
     expect((doc.getNodeById('a') as TextNode).text.text, 'onetwo');
   });
+
+  test('Enter at the start of a heading keeps the heading on the text', () {
+    final doc = MutableDocument(
+      nodes: [_para('a', 'Title', metadata: {'blockType': 'header1'})],
+    );
+    final composer = DocumentComposer(
+      selection: DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    _editor(doc, composer).execute([InsertNewlineRequest()]);
+    expect((doc.getNodeAt(1) as TextNode).blockType, 'header1');
+    expect((doc.getNodeAt(1) as TextNode).text.text, 'Title');
+  });
 }
 
 class _ThrowingRequest extends EditRequest {}
