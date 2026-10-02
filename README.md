@@ -26,8 +26,21 @@ callouts, toggles, links, emoji, markdown shortcuts and paste, auto-linking,
 and its own text input client for hardware keyboards and IME. Not yet published
 to pub.dev.
 
+## Loading stored documents
+
+Use `loadDocument` rather than `MutableDocument.fromJson` for anything read
+from disk or a server. It never throws, keeps content it does not understand
+(`UnknownNode`), repairs broken structure and reports what it did. If
+`fromNewerVersion` is true, open the document read-only: saving from an older
+build could drop content it cannot see.
+
 ## Development
 
 ```bash
 cd packages/quire_core && dart pub get && dart analyze && dart test
+dart run tool/benchmark.dart   # edit/undo timings on 5k to 100k word documents
 ```
+
+Run `docs/MANUAL_TEST_CHECKLIST.md` on a device before releasing changes to
+input handling. Golden tests (`flutter test --tags golden`) are regenerated
+with `--update-goldens` and are only valid on the machine that made them.
