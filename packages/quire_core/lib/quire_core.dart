@@ -10,3 +10,5 @@ export 'src/history.dart';
 export 'src/nodes.dart';
 export 'src/selection.dart';
 export 'src/table_commands.dart';
+export 'src/validate.dart';
+export 'src/load.dart';

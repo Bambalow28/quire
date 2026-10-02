@@ -1,0 +1,4 @@
+tags:
+  # Pixel-exact, so only meaningful on the machine that made the images
+  # (font rasterisation differs between macOS and Linux). CI skips them.
+  golden:

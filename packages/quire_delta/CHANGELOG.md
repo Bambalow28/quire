@@ -1,3 +1,7 @@
+## 0.2.0
+
+- Fuzz test: arbitrary junk ops never throw and always yield a valid document.
+
 ## 0.1.0
 
 - Initial release.

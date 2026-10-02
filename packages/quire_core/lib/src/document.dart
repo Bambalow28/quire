@@ -1,5 +1,6 @@
 import 'dart:collection';
 
+import 'load.dart' show documentSchemaVersion;
 import 'nodes.dart';
 
 /// The document: an ordered list of top-level nodes, plus (since a
@@ -34,6 +35,36 @@ class MutableDocument {
   DocumentNode get last => _nodes.last;
 
   DocumentNode? getNodeById(String id) => _idIndex[id];
+
+  /// The list [id] lives in (top level or a table cell), or null.
+  List<DocumentNode>? containerOf(String id) => _containerOf[id];
+
+  static const _containerTypes = {'toggleList', 'callout'};
+
+  /// The indent a block inserted right after [id] should take: one deeper
+  /// than a toggle/callout title, the same as a line inside one, otherwise 0.
+  /// A plain nested list item gives 0: only containers own what follows them.
+  int nestingAfter(String id) {
+    final node = getNodeById(id);
+    if (node == null) return 0;
+    if (node is TextNode && _containerTypes.contains(node.blockType)) {
+      return node.indent + 1;
+    }
+    if (node.indent == 0) return 0;
+    final ordered = nodesInDocumentOrder;
+    var depth = node.indent;
+    for (var i = getNodeIndexById(id) - 1; i >= 0; i--) {
+      final candidate = ordered[i];
+      if (candidate is! TextNode || candidate.indent >= depth) continue;
+      if (_containerTypes.contains(candidate.blockType)) return node.indent;
+      if (candidate.indent == 0) return 0;
+      depth = candidate.indent;
+    }
+    return 0;
+  }
+
+  /// Whether [id] is a top-level node rather than one nested in a table cell.
+  bool isTopLevel(String id) => identical(_containerOf[id], _nodes);
 
   DocumentNode getNodeAt(int index) => nodesInDocumentOrder[index];
 
@@ -211,6 +242,7 @@ class MutableDocument {
   }
 
   Map<String, Object?> toJson() => {
+    'version': documentSchemaVersion,
     'nodes': _nodes.map((n) => n.toJson()).toList(),
   };
 

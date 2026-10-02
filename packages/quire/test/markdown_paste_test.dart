@@ -93,4 +93,52 @@ void main() {
     expect(node.text.text, 'Just some plain prose, nothing special here.');
     expect(node.text.spans, isEmpty);
   });
+
+  testWidgets('a markdown table pastes as a table, text around it kept', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    stored = '- before\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\n- after';
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    await controller.pasteClipboard();
+
+    final doc = controller.document;
+    final tables = doc.nodes.whereType<TableNode>().toList();
+    expect(tables, hasLength(1));
+    expect(tables.single.gridSize, (2, 2));
+    final texts = doc.nodes.whereType<TextNode>().map((n) => n.text.text);
+    expect(texts, containsAll(['before', 'after']));
+    expect(validateDocument(doc, controller.composer.selection), isEmpty);
+  });
+
+  testWidgets('a pasted table lands between the two halves of the caret line', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('foobar'))],
+      ),
+    );
+    stored = '| a |\n| - |\n| 1 |';
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(3)),
+      ),
+    );
+    await controller.pasteClipboard();
+
+    final order = controller.document.nodes
+        .map((n) => n is TextNode ? n.text.text : n.type)
+        .where((t) => t.isNotEmpty)
+        .toList();
+    expect(order, ['foo', 'table', 'bar']);
+  });
 }

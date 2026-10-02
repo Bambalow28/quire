@@ -40,9 +40,11 @@ typedef FindMatch = ({String nodeId, int start, int end});
 /// [EditHistory.execute] (never the document directly), so undo/redo stay
 /// correct.
 class QuireEditorController extends ChangeNotifier implements EditListener {
-  QuireEditorController({MutableDocument? document})
-    : document = document ?? MutableDocument(),
-      composer = DocumentComposer() {
+  QuireEditorController({
+    MutableDocument? document,
+    this.copyAsMarkdown = false,
+  }) : document = document ?? MutableDocument(),
+       composer = DocumentComposer() {
     editor = Editor(
       this.document,
       composer,
@@ -54,6 +56,12 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
 
   final MutableDocument document;
   final DocumentComposer composer;
+
+  /// Put Markdown on the system clipboard instead of bare text, so pasting
+  /// into another app (Notion, Obsidian, a chat box) keeps headings, lists
+  /// and emphasis. Costs literal `**` and `#` marks where the destination
+  /// does not parse Markdown, hence off by default.
+  final bool copyAsMarkdown;
   late final Editor editor;
   late final EditHistory history;
 
@@ -1038,12 +1046,15 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   Future<void> copySelection() async {
     final selection = composer.selection;
     if (selection == null) return;
-    final text = flattenSelectionText(document, selection);
-    if (text.isEmpty) return;
-    QuireClipboard.instance.store(
-      text,
-      extractSelectionNodes(document, selection),
-    );
+    final plain = flattenSelectionText(document, selection);
+    if (plain.isEmpty) return;
+    final nodes = extractSelectionNodes(document, selection);
+    // A fragment inside one block stays plain: Markdown would wrap it in that
+    // block's own bullet, heading or fence marks.
+    final text = copyAsMarkdown && nodes.length > 1
+        ? quireToMarkdown(MutableDocument(nodes: nodes))
+        : plain;
+    QuireClipboard.instance.store(text, nodes);
     await Clipboard.setData(ClipboardData(text: text));
   }
 
@@ -1068,22 +1079,75 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     }
     // Text pasted from outside the app carries no rich nodes —
     // if it looks like Markdown, convert it instead of pasting it literally.
-    // Non-TextNode results (e.g. a "---" rule) are dropped:
-    // InsertRichContentRequest only knows how to splice TextNodes.
     if (_looksLikeMarkdown(text)) {
-      final nodes = markdownToQuireOrNull(
-        text,
-      )?.nodes.whereType<TextNode>().toList();
+      final nodes = markdownToQuireOrNull(text)?.nodes.toList();
       if (nodes != null && nodes.isNotEmpty) {
-        replaceSelectionWithNodes(nodes);
+        _pasteNodes(nodes);
         return;
       }
     }
-    // ponytail: the OS clipboard only round-trips plain text without a
-    // plugin, so content copied outside Quire (or since overwritten
-    // elsewhere) pastes unformatted. Ceiling: a clipboard plugin (e.g.
-    // super_clipboard) for cross-app text/html round-trip.
+    // ponytail: the OS clipboard only carries plain text without a plugin, so
+    // formatting crosses apps only as Markdown (see [copyAsMarkdown]) and
+    // text copied elsewhere pastes unformatted unless it looks like Markdown.
+    // Ceiling: a clipboard plugin (e.g. super_clipboard) for text/html.
     replaceSelectionWithText(text);
+  }
+
+  /// Splices converted Markdown into the document: runs of text lines go
+  /// through the rich-text paste, tables/images/rules are inserted as blocks.
+  /// One undo step.
+  void _pasteNodes(List<DocumentNode> nodes) {
+    if (composer.selection == null) return;
+    history.transaction(() {
+      if (!composer.selection!.isCollapsed) deleteSelection();
+      final hasBlock = nodes.any((n) => n is! TextNode);
+      if (hasBlock) _splitTailOffCaretLine();
+      var run = <TextNode>[];
+      void flush() {
+        if (run.isEmpty || composer.selection == null) return;
+        replaceSelectionWithNodes(run);
+        run = [];
+      }
+
+      for (final node in nodes) {
+        if (node is TextNode) {
+          run.add(node);
+          continue;
+        }
+        flush();
+        final at = composer.selection?.extent.nodeId;
+        if (at == null) break;
+        history.execute([InsertNodeRequest(node, afterNodeId: at)]);
+      }
+      flush();
+    });
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
+  }
+
+  /// Moves whatever follows the caret onto its own line and parks the caret
+  /// at the end of the line before it, so blocks pasted there land between
+  /// the two halves instead of after the tail.
+  void _splitTailOffCaretLine() {
+    final selection = composer.selection;
+    if (selection == null) return;
+    final node = document.getNodeById(selection.extent.nodeId);
+    final at = selection.extent.nodePosition;
+    if (node is! TextNode ||
+        at is! TextNodePosition ||
+        at.offset >= node.text.text.length) {
+      return;
+    }
+    insertNewline();
+    final tailId = composer.selection?.extent.nodeId;
+    final head = tailId == null ? null : document.getNodeBefore(tailId);
+    if (head is TextNode) {
+      changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition(head.id, TextNodePosition(head.text.text.length)),
+        ),
+      );
+    }
   }
 
   /// Whether [text] is plausibly Markdown rather than plain prose: at least
@@ -1093,7 +1157,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   /// [markdownToQuire]'s own parsing — this only decides which paste path
   /// to take, not how to parse it.
   static final _mdBlockLine = RegExp(
-    r'^ {0,3}(#{1,6}\s|[-*]\s|\d+\.\s|\[[ xX]\]\s|>|`{3})',
+    r'^ {0,3}(#{1,6}\s|[-*]\s|\d+\.\s|\[[ xX]\]\s|>|`{3}|\|.*\|\s*$)',
     multiLine: true,
   );
   static final _mdInlineMarkup = RegExp(

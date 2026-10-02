@@ -274,12 +274,23 @@ class AttributedText {
     'spans': spans.map((s) => s.toJson()).toList(),
   };
 
-  factory AttributedText.fromJson(Map<String, Object?> json) => AttributedText(
-    json['text'] as String,
-    (json['spans'] as List)
-        .map((s) => AttributionSpan.fromJson(s as Map<String, Object?>))
-        .toList(),
-  );
+  /// Tolerant of corrupt data: a span that is malformed, empty or lies
+  /// outside the text is dropped or clamped rather than failing the load.
+  factory AttributedText.fromJson(Map<String, Object?> json) {
+    final text = json['text'] as String? ?? '';
+    final spans = <AttributionSpan>[];
+    for (final raw in json['spans'] as List? ?? const []) {
+      try {
+        final span = AttributionSpan.fromJson(raw as Map<String, Object?>);
+        final start = span.start.clamp(0, text.length);
+        final end = span.end.clamp(0, text.length);
+        if (end > start) spans.add(span.copyWith(start: start, end: end));
+      } catch (_) {
+        continue;
+      }
+    }
+    return AttributedText(text, spans);
+  }
 
   @override
   bool operator ==(Object other) =>

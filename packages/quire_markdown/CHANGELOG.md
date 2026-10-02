@@ -1,3 +1,9 @@
+## 0.2.0
+
+- GFM tables: import to `TableNode` (one paragraph per cell, ragged rows
+  padded) and export back. Merged cells export flat.
+- Fuzz tests: arbitrary input never throws and always yields a valid document.
+
 ## 0.1.0
 
 - Initial release.

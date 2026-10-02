@@ -1,3 +1,25 @@
+## 0.2.0
+
+- `loadDocument`: loads stored JSON without ever throwing. Unreadable or
+  unknown nodes are kept as `UnknownNode` and written back unchanged, duplicate
+  ids are reissued, empty table cells and empty documents get a paragraph.
+  Returns the repairs made and whether the JSON came from a newer schema.
+- `MutableDocument.toJson` stamps `version` (`documentSchemaVersion`, now 1).
+  Documents without one still load.
+- `validateDocument`: lists structural problems (ids, spans, table grids,
+  selection positions); never throws.
+- `AttributedText.fromJson` clamps or drops spans that lie outside the text.
+- Fix: deleting a selection that crossed a table crashed or left cells with no
+  nodes. Text in different cells is no longer merged.
+- Fix: toggling a style on a bare caret threw after a selection change.
+- Undo history shares unchanged text nodes between snapshots, so a long
+  document no longer costs a full copy per undo step.
+- Non-text nodes carry `indent`, so images and tables can live inside a toggle
+  or callout; `InsertNodeRequest` and `InsertTableRequest` inherit the depth of
+  the line they follow.
+- `MutableDocument.containerOf` and `isTopLevel`.
+- Randomised edit/undo fuzz tests and `tool/benchmark.dart`.
+
 ## 0.1.0
 
 Initial release: pure-Dart document model and edit pipeline for Quire, with

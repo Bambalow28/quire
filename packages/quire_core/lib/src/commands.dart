@@ -157,41 +157,38 @@ class _DeleteSelectionCommand extends EditCommand {
     final (startPos, endPos) = selection.normalize(document);
     final startIndex = document.getNodeIndexById(startPos.nodeId);
     final endIndex = document.getNodeIndexById(endPos.nodeId);
+    if (startIndex < 0 || endIndex < 0) return;
     final beforeStart = startIndex > 0
         ? document.getNodeAt(startIndex - 1)
         : null;
     final afterEnd = document.getNodeAfter(endPos.nodeId);
     final changedIds = <String>{};
 
+    // Descending, so deleting a node (and, for a table, its cells further
+    // along in document order) never shifts an index still to be visited.
     for (var i = endIndex - 1; i > startIndex; i--) {
-      final id = document.getNodeAt(i).id;
-      document.deleteNode(id);
-      changedIds.add(id);
+      final node = document.getNodeAt(i);
+      // A table the selection only partly covers (it ends inside it) stays;
+      // only the cell content inside the range goes.
+      if (node is TableNode && _containsId(node, endPos.nodeId)) continue;
+      _removeNode(document, node, changedIds);
     }
 
-    final startNode = document.getNodeById(startPos.nodeId)!;
-    final endNode = document.getNodeById(endPos.nodeId)!;
+    final startNode = document.getNodeById(startPos.nodeId);
+    final endNode = document.getNodeById(endPos.nodeId);
+    if (startNode == null || endNode == null) return;
 
+    DocumentPosition? landing;
     if (startPos.nodeId == endPos.nodeId) {
       if (startNode is TextNode) {
         final start = (startPos.nodePosition as TextNodePosition).offset;
         final end = (endPos.nodePosition as TextNodePosition).offset;
         startNode.text = startNode.text.remove(start, end);
         changedIds.add(startNode.id);
-        context.composer.selection = DocumentSelection.collapsed(
-          DocumentPosition(startNode.id, TextNodePosition(start)),
-        );
+        landing = DocumentPosition(startNode.id, TextNodePosition(start));
       } else {
-        document.deleteNode(startNode.id);
-        changedIds.add(startNode.id);
-        final landing = beforeStart != null
-            ? _endOf(beforeStart)
-            : (afterEnd != null ? _startOf(afterEnd) : null);
-        if (landing != null) {
-          context.composer.selection = DocumentSelection.collapsed(landing);
-        } else {
-          context.composer.selection = null;
-        }
+        _removeNode(document, startNode, changedIds);
+        landing = _landingAfterRemoval(document, beforeStart, afterEnd);
       }
     } else {
       final startPrefix = startNode is TextNode
@@ -206,54 +203,106 @@ class _DeleteSelectionCommand extends EditCommand {
               endNode.text.text.length,
             )
           : null;
+      // Lines only join when they live in the same container; text in two
+      // different table cells must not be merged into one.
+      final sameContainer = identical(
+        document.containerOf(startNode.id),
+        document.containerOf(endNode.id),
+      );
 
       if (startNode is TextNode && endNode is TextNode) {
-        final caretOffset = startPrefix!.text.length;
-        startNode.text = _concatText(startPrefix, endSuffix!);
         changedIds.add(startNode.id);
-        document.deleteNode(endNode.id);
-        changedIds.add(endNode.id);
-        context.composer.selection = DocumentSelection.collapsed(
-          DocumentPosition(startNode.id, TextNodePosition(caretOffset)),
+        if (sameContainer) {
+          startNode.text = _concatText(startPrefix!, endSuffix!);
+          _removeNode(document, endNode, changedIds);
+        } else {
+          startNode.text = startPrefix!;
+          endNode.text = endSuffix!;
+          changedIds.add(endNode.id);
+        }
+        landing = DocumentPosition(
+          startNode.id,
+          TextNodePosition(startPrefix.text.length),
         );
       } else if (startNode is TextNode) {
         startNode.text = startPrefix!;
         changedIds.add(startNode.id);
-        document.deleteNode(endNode.id);
-        changedIds.add(endNode.id);
-        context.composer.selection = DocumentSelection.collapsed(
-          DocumentPosition(
-            startNode.id,
-            TextNodePosition(startPrefix.text.length),
-          ),
+        _removeNode(document, endNode, changedIds);
+        landing = DocumentPosition(
+          startNode.id,
+          TextNodePosition(startPrefix.text.length),
         );
       } else if (endNode is TextNode) {
         endNode.text = endSuffix!;
         changedIds.add(endNode.id);
-        document.deleteNode(startNode.id);
-        changedIds.add(startNode.id);
-        context.composer.selection = DocumentSelection.collapsed(
-          DocumentPosition(endNode.id, const TextNodePosition(0)),
-        );
+        _removeNode(document, startNode, changedIds);
+        landing = DocumentPosition(endNode.id, const TextNodePosition(0));
       } else {
-        document.deleteNode(startNode.id);
-        changedIds.add(startNode.id);
-        document.deleteNode(endNode.id);
-        changedIds.add(endNode.id);
-        final landing = beforeStart != null
-            ? _endOf(beforeStart)
-            : (afterEnd != null ? _startOf(afterEnd) : null);
-        if (landing != null) {
-          context.composer.selection = DocumentSelection.collapsed(landing);
-        } else {
-          context.composer.selection = null;
-        }
+        _removeNode(document, startNode, changedIds);
+        _removeNode(document, endNode, changedIds);
+        landing = _landingAfterRemoval(document, beforeStart, afterEnd);
       }
     }
 
+    context.composer.selection = landing == null
+        ? null
+        : DocumentSelection.collapsed(landing);
     executor.emit(DocumentEdited(changedIds.toList()));
     executor.emit(SelectionChanged());
   }
+}
+
+/// Whether [id] is [node] itself or sits anywhere inside it (a table's cells).
+bool _containsId(DocumentNode node, String id) {
+  if (node.id == id) return true;
+  if (node is! TableNode) return false;
+  for (final row in node.rows) {
+    for (final cell in row.cells) {
+      if (cell.nodes.any((n) => _containsId(n, id))) return true;
+    }
+  }
+  return false;
+}
+
+/// Deletes [node], except that the last node of a table cell is blanked in
+/// place: a cell with no nodes has nowhere to put a caret.
+void _removeNode(
+  MutableDocument document,
+  DocumentNode node,
+  Set<String> changedIds,
+) {
+  final container = document.containerOf(node.id);
+  final isOnlyCellNode =
+      container != null &&
+      container.length == 1 &&
+      !document.isTopLevel(node.id);
+  changedIds.add(node.id);
+  if (!isOnlyCellNode) {
+    document.deleteNode(node.id);
+    return;
+  }
+  if (node is TextNode) {
+    node.text = AttributedText('');
+    node.metadata = {};
+    return;
+  }
+  final blank = TextNode(id: generateNodeId(), text: AttributedText(''));
+  document.insertNodeAfter(node.id, blank);
+  document.deleteNode(node.id);
+  changedIds.add(blank.id);
+}
+
+DocumentPosition? _landingAfterRemoval(
+  MutableDocument document,
+  DocumentNode? beforeStart,
+  DocumentNode? afterEnd,
+) {
+  final before = beforeStart == null
+      ? null
+      : document.getNodeById(beforeStart.id);
+  if (before != null) return _endOf(before);
+  final after = afterEnd == null ? null : document.getNodeById(afterEnd.id);
+  return after == null ? null : _startOf(after);
 }
 
 // --- InsertNewlineRequest ------------------------------------------------
@@ -349,7 +398,8 @@ class _InsertNewlineCommand extends EditCommand {
         return;
       }
 
-      if (node.text.text.isEmpty && (_listBlockTypes.contains(node.blockType) ||
+      if (node.text.text.isEmpty &&
+          (_listBlockTypes.contains(node.blockType) ||
               node.blockType == 'blockquote')) {
         // Enter on an empty list/quote line ends it (Apple Notes): step out
         // one level if nested, else back to a plain paragraph.
@@ -443,7 +493,8 @@ class _ChangeSelectionCommand extends EditCommand {
     executor.emit(SelectionChanged());
 
     final selection = request.selection;
-    Set<Attribution> newComposing = const {};
+    // Mutable: toggling a style on a bare caret adds to this set in place.
+    Set<Attribution> newComposing = {};
     if (selection != null && selection.isCollapsed) {
       final node = context.document.getNodeById(selection.extent.nodeId);
       final position = selection.extent.nodePosition;
@@ -688,24 +739,36 @@ class _InsertNodeCommand extends EditCommand {
   @override
   void execute(EditContext context, CommandExecutor executor) {
     final document = context.document;
-    if (request.afterNodeId != null) {
-      document.insertNodeAfter(request.afterNodeId!, request.node);
-    } else {
-      document.insertNodeAt(document.nodes.length, request.node);
+    final node = request.node;
+    // A block dropped into a toggle/callout joins it: it takes the depth of
+    // the line it follows, unless the caller already chose one.
+    final indent = request.afterNodeId == null
+        ? 0
+        : document.nestingAfter(request.afterNodeId!);
+    if (indent > 0 &&
+        node is! TextNode &&
+        !node.metadata.containsKey('indent')) {
+      node.metadata = {...node.metadata, 'indent': indent};
     }
-    final changedIds = [request.node.id];
+    if (request.afterNodeId != null) {
+      document.insertNodeAfter(request.afterNodeId!, node);
+    } else {
+      document.insertNodeAt(document.nodes.length, node);
+    }
+    final changedIds = [node.id];
 
     // A non-text block (image, rule) needs somewhere for the caret to land
     // next — add a trailing empty paragraph unless one is already there, and
     // put the caret in it either way.
-    if (request.node is! TextNode) {
-      var next = document.getNodeAfterInContainer(request.node.id);
+    if (node is! TextNode) {
+      var next = document.getNodeAfterInContainer(node.id);
       if (next is! TextNode) {
         final paragraph = TextNode(
           id: generateNodeId(),
           text: AttributedText(''),
+          metadata: node.indent > 0 ? {'indent': node.indent} : null,
         );
-        document.insertNodeAfter(request.node.id, paragraph);
+        document.insertNodeAfter(node.id, paragraph);
         changedIds.add(paragraph.id);
         next = paragraph;
       }

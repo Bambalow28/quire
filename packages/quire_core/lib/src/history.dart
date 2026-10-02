@@ -1,3 +1,6 @@
+import 'dart:convert';
+
+import 'attributed_text.dart';
 import 'commands.dart';
 import 'editor.dart';
 import 'nodes.dart';
@@ -33,10 +36,17 @@ class _RestoreSnapshotCommand extends EditCommand {
 EditCommand? historyRequestHandler(EditRequest request) =>
     request is RestoreSnapshotRequest ? _RestoreSnapshotCommand(request) : null;
 
-typedef _Snapshot = ({Map<String, Object?> doc, Map<String, Object?>? sel});
+// A snapshot holds each top-level node as its encoded JSON. A text node that
+// has not changed since the previous snapshot reuses the same String, so a
+// step in a long document costs the nodes that changed, not the whole thing.
+typedef _Snapshot = ({List<String> nodes, Map<String, Object?>? sel});
 
-// ponytail: full-document snapshots, switch to inverse commands if memory
-// hurts on large docs.
+class _CachedNode {
+  _CachedNode(this.text, this.metadata, this.json);
+  final AttributedText text;
+  final String metadata;
+  final String json;
+}
 
 /// Undo/redo via document snapshots, listening on an [Editor].
 ///
@@ -155,10 +165,33 @@ class EditHistory implements EditListener {
     if (_undoStack.length > maxEntries) _undoStack.removeAt(0);
   }
 
-  _Snapshot _snapshot() => (
-    doc: editor.context.document.toJson(),
-    sel: editor.context.composer.selection?.toJson(),
-  );
+  Map<String, _CachedNode> _nodeCache = {};
+
+  _Snapshot _snapshot() {
+    final next = <String, _CachedNode>{};
+    final nodes = <String>[];
+    for (final node in editor.context.document.nodes) {
+      if (node is TextNode) {
+        final metadata = jsonEncode(node.metadata);
+        var cached = _nodeCache[node.id];
+        if (cached == null ||
+            !identical(cached.text, node.text) ||
+            cached.metadata != metadata) {
+          cached = _CachedNode(node.text, metadata, jsonEncode(node.toJson()));
+        }
+        next[node.id] = cached;
+        nodes.add(cached.json);
+      } else {
+        nodes.add(jsonEncode(node.toJson()));
+      }
+    }
+    _nodeCache = next;
+    return (nodes: nodes, sel: editor.context.composer.selection?.toJson());
+  }
+
+  RestoreSnapshotRequest _restore(_Snapshot target) => RestoreSnapshotRequest({
+    'nodes': [for (final n in target.nodes) jsonDecode(n)],
+  }, target.sel);
 
   (String, int)? _singleCharInsertKey(List<EditRequest> requests) {
     if (requests.length != 1) return null;
@@ -176,7 +209,7 @@ class EditHistory implements EditListener {
     final current = _snapshot();
     final target = _undoStack.removeLast();
     _redoStack.add(current);
-    editor.execute([RestoreSnapshotRequest(target.doc, target.sel)]);
+    editor.execute([_restore(target)]);
   }
 
   void redo() {
@@ -186,6 +219,6 @@ class EditHistory implements EditListener {
     final current = _snapshot();
     final target = _redoStack.removeLast();
     _undoStack.add(current);
-    editor.execute([RestoreSnapshotRequest(target.doc, target.sel)]);
+    editor.execute([_restore(target)]);
   }
 }

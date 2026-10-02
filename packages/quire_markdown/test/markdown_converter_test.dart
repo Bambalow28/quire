@@ -6,6 +6,7 @@ TextNode textNodeAt(MutableDocument doc, int index) =>
     doc.nodes[index] as TextNode;
 
 void main() {
+  tableTests();
   group('headings', () {
     test('levels 1-6', () {
       for (var n = 1; n <= 6; n++) {
@@ -44,7 +45,10 @@ void main() {
 
     test('italic with asterisk and underscore', () {
       final star = markdownToQuire('*it*').nodes[0] as TextNode;
-      expect(star.text.attributionsAt(0), contains(const Attribution('italic')));
+      expect(
+        star.text.attributionsAt(0),
+        contains(const Attribution('italic')),
+      );
       final underscore = markdownToQuire('_it_').nodes[0] as TextNode;
       expect(
         underscore.text.attributionsAt(0),
@@ -357,6 +361,79 @@ void main() {
       expect(result.nodes[1], isA<HorizontalRuleNode>());
       expect(textNodeAt(result, 0).text.text, 'above');
       expect(textNodeAt(result, 2).text.text, 'below');
+    });
+  });
+}
+
+void tableTests() {
+  group('GFM tables', () {
+    const md =
+        '| Name | Qty |\n| --- | ---: |\n| Apple | 3 |\n| **Pear** | 5 |';
+
+    test('import builds a TableNode', () {
+      final table = markdownToQuire(md).nodes.single as TableNode;
+      expect(table.gridSize, (3, 2));
+      final cell = table.cellAt(2, 0)!.nodes.single as TextNode;
+      expect(cell.text.text, 'Pear');
+      expect(cell.text.spans, isNotEmpty);
+    });
+
+    test('export writes the same table back', () {
+      expect(quireToMarkdown(markdownToQuire(md)), contains('| Apple | 3 |'));
+      expect(
+        quireToMarkdown(markdownToQuire(quireToMarkdown(markdownToQuire(md)))),
+        quireToMarkdown(markdownToQuire(md)),
+      );
+    });
+
+    test('escaped pipes stay in the cell', () {
+      final table =
+          markdownToQuire('| a |\n| --- |\n| x \\| y |').nodes.single
+              as TableNode;
+      expect((table.cellAt(1, 0)!.nodes.single as TextNode).text.text, 'x | y');
+    });
+
+    test('ragged rows are padded to the header width', () {
+      final table =
+          markdownToQuire('| a | b |\n| - | - |\n| only |').nodes.single
+              as TableNode;
+      expect(table.gridSize, (2, 2));
+    });
+
+    test('a pipe line without a delimiter row is a paragraph', () {
+      final doc = markdownToQuire('a | b\nplain');
+      expect(doc.nodes.whereType<TableNode>(), isEmpty);
+    });
+
+    test('a multi-paragraph cell round-trips through <br>', () {
+      final table =
+          markdownToQuire('| a |\n| - |\n| one<br>two |').nodes.single
+              as TableNode;
+      expect(table.cellAt(1, 0)!.nodes, hasLength(2));
+      expect(
+        quireToMarkdown(MutableDocument(nodes: [table])),
+        contains('one<br>two'),
+      );
+    });
+
+    test('merged cells export flat', () {
+      final table = TableNode(
+        id: 't',
+        rows: [
+          TableRow(
+            cells: [
+              TableCell(
+                nodes: [TextNode(id: 'x', text: AttributedText('wide'))],
+                colSpan: 2,
+              ),
+            ],
+          ),
+        ],
+      );
+      expect(
+        quireToMarkdown(MutableDocument(nodes: [table])).split('\n').first,
+        '| wide |  |',
+      );
     });
   });
 }

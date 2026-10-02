@@ -405,7 +405,7 @@ class _QuireEditorState extends State<QuireEditor>
     final visible = <DocumentNode>[];
     int? collapsedAtIndent;
     for (final node in nodes) {
-      final indent = node is TextNode ? node.indent : 0;
+      final indent = node.indent;
       if (collapsedAtIndent != null) {
         if (indent > collapsedAtIndent) continue;
         collapsedAtIndent = null;
@@ -1815,15 +1815,68 @@ class _QuireEditorState extends State<QuireEditor>
 
   Widget _buildNode(BuildContext context, DocumentNode node) {
     if (node is TextNode) return _buildTextNode(context, node);
-    if (node is ImageNode) return _buildImageNode(context, node);
-    if (node is TableNode) return _buildTableNode(context, node);
-    if (node is HorizontalRuleNode) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
-        child: Divider(),
+    final block = _buildBlockNode(context, node);
+    if (node.indent == 0) return block;
+    final container = _containerParentOf(node);
+    if (container != null && container.blockType == 'callout') {
+      return _calloutContentFrame(Theme.of(context), node, container, block);
+    }
+    return Padding(
+      padding: EdgeInsets.only(left: node.indent * 24.0),
+      child: block,
+    );
+  }
+
+  Widget _buildBlockNode(BuildContext context, DocumentNode node) {
+    if (node is ImageNode) {
+      return Semantics(
+        image: true,
+        excludeSemantics: true,
+        label: node.altText?.isNotEmpty == true ? node.altText : 'Image',
+        child: _buildImageNode(context, node),
       );
     }
+    if (node is TableNode) {
+      final (rows, columns) = node.gridSize;
+      return Semantics(
+        container: true,
+        label: 'Table, $rows rows, $columns columns',
+        child: _buildTableNode(context, node),
+      );
+    }
+    if (node is HorizontalRuleNode) {
+      return const ExcludeSemantics(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 8),
+          child: Divider(),
+        ),
+      );
+    }
+    if (node is UnknownNode) return _buildUnknownNode(context, node);
     return const SizedBox.shrink();
+  }
+
+  /// Content from a newer build this one cannot render: shown as a labelled
+  /// placeholder, and saved back untouched.
+  Widget _buildUnknownNode(BuildContext context, UnknownNode node) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Semantics(
+          label: 'Unsupported content: ${node.type}',
+          child: Text(
+            'Unsupported content (${node.type})',
+            style: theme.textTheme.bodySmall,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildTableNode(BuildContext context, TableNode node) {
@@ -1928,6 +1981,24 @@ class _QuireEditorState extends State<QuireEditor>
     });
   }
 
+  /// What a screen reader announces for a block's role, beyond its text.
+  static final _headerType = RegExp(r'^header(\d)$');
+
+  String? _blockHint(TextNode node) {
+    final level = _headerType.firstMatch(node.blockType)?.group(1);
+    if (level != null) return 'Heading level $level';
+    return switch (node.blockType) {
+      'listItemUnordered' => 'Bulleted list item',
+      'listItemOrdered' => 'Numbered list item',
+      'listItemTask' => 'Task',
+      'blockquote' => 'Quote',
+      'code' => 'Code',
+      'callout' => 'Callout',
+      'toggleList' => node.isCollapsed ? 'Collapsed toggle' : 'Expanded toggle',
+      _ => null,
+    };
+  }
+
   Widget _buildTextNode(BuildContext context, TextNode node) {
     final paragraphKey = _paragraphKeys[node.id]!;
     if (node.blockType == 'listItemTask' || node.blockType == 'toggleList') {
@@ -1951,6 +2022,9 @@ class _QuireEditorState extends State<QuireEditor>
         child: Semantics(
           textField: true,
           multiline: true,
+          header: node.blockType.startsWith('header'),
+          hint: _blockHint(node),
+          checked: node.blockType == 'listItemTask' ? node.isChecked : null,
           value: node.text.text,
           focused: isFocused,
           onTap: () => _placeCaret(node.id, node.text.text.length),
@@ -2061,29 +2135,7 @@ class _QuireEditorState extends State<QuireEditor>
       default:
         final container = _containerParentOf(node);
         if (container != null && container.blockType == 'callout') {
-          final isLast = _isLastContainerContentNode(node, container);
-          return Padding(
-            padding: EdgeInsets.only(
-              left: container.indent * 24.0,
-              bottom: isLast ? 4 : 0,
-            ),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              decoration: BoxDecoration(
-                border: Border(
-                  left: BorderSide(color: theme.dividerColor),
-                  right: BorderSide(color: theme.dividerColor),
-                  bottom: isLast
-                      ? BorderSide(color: theme.dividerColor)
-                      : BorderSide.none,
-                ),
-                borderRadius: isLast
-                    ? const BorderRadius.vertical(bottom: Radius.circular(8))
-                    : null,
-              ),
-              child: row,
-            ),
-          );
+          return _calloutContentFrame(theme, node, container, row);
         }
         return Padding(
           padding: EdgeInsets.only(left: indentPadding, bottom: 4),
@@ -2092,12 +2144,44 @@ class _QuireEditorState extends State<QuireEditor>
     }
   }
 
+  /// The side and bottom rules that continue a callout's box around one of
+  /// the nodes it owns.
+  Widget _calloutContentFrame(
+    ThemeData theme,
+    DocumentNode node,
+    TextNode container,
+    Widget child,
+  ) {
+    final isLast = _isLastContainerContentNode(node, container);
+    return Padding(
+      padding: EdgeInsets.only(
+        left: container.indent * 24.0,
+        bottom: isLast ? 4 : 0,
+      ),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(
+          border: Border(
+            left: BorderSide(color: theme.dividerColor),
+            right: BorderSide(color: theme.dividerColor),
+            bottom: isLast
+                ? BorderSide(color: theme.dividerColor)
+                : BorderSide.none,
+          ),
+          borderRadius: isLast
+              ? const BorderRadius.vertical(bottom: Radius.circular(8))
+              : null,
+        ),
+        child: child,
+      ),
+    );
+  }
+
   bool _containerHasContent(TextNode container) {
-    final nodes = widget.controller.document.nodesInDocumentOrder.toList();
+    final nodes = widget.controller.document.nodesInDocumentOrder;
     final index = nodes.indexWhere((n) => n.id == container.id);
     if (index == -1 || index + 1 >= nodes.length) return false;
-    final next = nodes[index + 1];
-    return next is TextNode && next.indent > container.indent;
+    return nodes[index + 1].indent > container.indent;
   }
 
   Widget _buildEmptyContainerHint(BuildContext context, TextNode container) {
@@ -2170,9 +2254,9 @@ class _QuireEditorState extends State<QuireEditor>
   static const _containerContentScale = 0.875;
   static const _containerBlockTypes = {'toggleList', 'callout'};
 
-  TextNode? _containerParentOf(TextNode node) {
+  TextNode? _containerParentOf(DocumentNode node) {
     if (node.indent == 0) return null;
-    final nodes = widget.controller.document.nodesInDocumentOrder.toList();
+    final nodes = widget.controller.document.nodesInDocumentOrder;
     final index = nodes.indexWhere((n) => n.id == node.id);
     if (index == -1) return null;
     var currentIndent = node.indent;
@@ -2186,14 +2270,15 @@ class _QuireEditorState extends State<QuireEditor>
     return null;
   }
 
-  bool _isInsideContainer(TextNode node) => _containerParentOf(node) != null;
+  bool _isInsideContainer(DocumentNode node) =>
+      _containerParentOf(node) != null;
 
-  bool _isLastContainerContentNode(TextNode node, TextNode container) {
-    final nodes = widget.controller.document.nodesInDocumentOrder.toList();
+  bool _isLastContainerContentNode(DocumentNode node, TextNode container) {
+    final nodes = widget.controller.document.nodesInDocumentOrder;
     final index = nodes.indexWhere((n) => n.id == node.id);
     if (index == -1 || index + 1 >= nodes.length) return true;
     final next = nodes[index + 1];
-    return !(next is TextNode && next.indent > container.indent);
+    return next.indent <= container.indent;
   }
 
   TextStyle _styleFor(ThemeData theme, TextNode node) {

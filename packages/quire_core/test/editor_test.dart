@@ -780,30 +780,35 @@ void main() {
     expect(a.indent, 0);
   });
 
-  test('Backspace at the start of a list line drops the list before merging', () {
-    final doc = MutableDocument(
-      nodes: [
-        _para('a', 'one'),
-        _para('b', 'two', metadata: {'blockType': 'listItemUnordered'}),
-      ],
-    );
-    final composer = DocumentComposer(
-      selection: DocumentSelection.collapsed(
-        DocumentPosition('b', const TextNodePosition(0)),
-      ),
-    );
-    final editor = _editor(doc, composer);
-    editor.execute([MergeWithPreviousNodeRequest('b')]);
-    expect(doc.nodes.length, 2);
-    expect((doc.getNodeById('b') as TextNode).blockType, 'paragraph');
-    editor.execute([MergeWithPreviousNodeRequest('b')]);
-    expect(doc.nodes.length, 1);
-    expect((doc.getNodeById('a') as TextNode).text.text, 'onetwo');
-  });
+  test(
+    'Backspace at the start of a list line drops the list before merging',
+    () {
+      final doc = MutableDocument(
+        nodes: [
+          _para('a', 'one'),
+          _para('b', 'two', metadata: {'blockType': 'listItemUnordered'}),
+        ],
+      );
+      final composer = DocumentComposer(
+        selection: DocumentSelection.collapsed(
+          DocumentPosition('b', const TextNodePosition(0)),
+        ),
+      );
+      final editor = _editor(doc, composer);
+      editor.execute([MergeWithPreviousNodeRequest('b')]);
+      expect(doc.nodes.length, 2);
+      expect((doc.getNodeById('b') as TextNode).blockType, 'paragraph');
+      editor.execute([MergeWithPreviousNodeRequest('b')]);
+      expect(doc.nodes.length, 1);
+      expect((doc.getNodeById('a') as TextNode).text.text, 'onetwo');
+    },
+  );
 
   test('Enter at the start of a heading keeps the heading on the text', () {
     final doc = MutableDocument(
-      nodes: [_para('a', 'Title', metadata: {'blockType': 'header1'})],
+      nodes: [
+        _para('a', 'Title', metadata: {'blockType': 'header1'}),
+      ],
     );
     final composer = DocumentComposer(
       selection: DocumentSelection.collapsed(

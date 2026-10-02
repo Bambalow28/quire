@@ -1,3 +1,16 @@
+## 0.2.0
+
+- `QuireEditorController(copyAsMarkdown: true)` puts Markdown on the system
+  clipboard so formatting survives a paste into Notion and similar apps.
+- Pasting Markdown now keeps tables, images and rules, not only text lines.
+- Accessibility: headings, list items, tasks (with checked state), quotes,
+  code, callouts, toggles, images and tables announce their role.
+- Nodes this build does not know render as a labelled placeholder and are
+  saved back untouched.
+- Images, tables and rules nest inside toggles and callouts; a collapsed toggle
+  hides them and a callout's border surrounds them.
+- Golden tests for block rendering (tag `golden`, skipped in CI).
+
 ## 0.1.0
 
 - `QuireEditor`: renders a `MutableDocument` as one `EditableText` per node,

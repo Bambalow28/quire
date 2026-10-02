@@ -46,6 +46,11 @@ class _InsertTableCommand extends EditCommand {
         ),
       ),
     );
+    // Dropped into a toggle/callout, the table takes that nesting depth.
+    final indent = request.afterNodeId == null
+        ? 0
+        : context.document.nestingAfter(request.afterNodeId!);
+    if (indent > 0) table.metadata = {...table.metadata, 'indent': indent};
     if (request.afterNodeId != null) {
       context.document.insertNodeAfter(request.afterNodeId!, table);
     } else {
@@ -61,6 +66,7 @@ class _InsertTableCommand extends EditCommand {
       final paragraph = TextNode(
         id: generateNodeId(),
         text: AttributedText(''),
+        metadata: indent > 0 ? {'indent': indent} : null,
       );
       context.document.insertNodeAfter(table.id, paragraph);
       changedIds.add(paragraph.id);

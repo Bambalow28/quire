@@ -1,3 +1,4 @@
+import 'node_ids.dart';
 import 'attributed_text.dart';
 
 /// A position within a single node's content (interpretation depends on node
@@ -84,9 +85,9 @@ final Map<String, NodeFromJson> nodeTypeRegistry = {
 DocumentNode nodeFromJson(Map<String, Object?> json) {
   final type = json['type'] as String;
   final factory = nodeTypeRegistry[type];
-  if (factory == null) {
-    throw ArgumentError('Unknown node type in JSON: $type');
-  }
+  // A type this build doesn't know (written by a newer app version) is kept
+  // verbatim rather than rejected, so opening and re-saving never destroys it.
+  if (factory == null) return UnknownNode.fromJson(json);
   return factory(json);
 }
 
@@ -94,10 +95,17 @@ abstract class DocumentNode {
   DocumentNode(this.id, {Map<String, Object?>? metadata})
     : metadata = metadata ?? {};
 
-  final String id;
+  /// Stable for the node's life; only the loader reissues one, to break a
+  /// duplicate.
+  String id;
   Map<String, Object?> metadata;
 
   String get type;
+
+  /// Nesting depth in the flat node list. A toggle or callout owns the nodes
+  /// right after it that are indented deeper than it, whatever their type, so
+  /// an image or table can live inside one.
+  int get indent => metadata['indent'] as int? ?? 0;
 
   Map<String, Object?> toJson();
 }
@@ -114,7 +122,6 @@ class TextNode extends DocumentNode {
   AttributedText text;
 
   String get blockType => metadata['blockType'] as String? ?? 'paragraph';
-  int get indent => metadata['indent'] as int? ?? 0;
   bool get isChecked => metadata['checked'] == true;
   bool get isCollapsed => metadata['collapsed'] == true;
   String get textAlign => metadata['textAlign'] as String? ?? 'left';
@@ -358,4 +365,23 @@ class HorizontalRuleNode extends DocumentNode {
           json['metadata'] as Map<String, Object?>? ?? const {},
         ),
       );
+}
+
+/// A node whose `type` this build does not know. Holds the raw JSON and
+/// writes it back unchanged, so a document touched by a newer app version
+/// survives a round trip through an older one.
+class UnknownNode extends DocumentNode {
+  UnknownNode({required String id, required this.raw}) : super(id);
+
+  /// The original JSON, including its `type` and `id`.
+  final Map<String, Object?> raw;
+
+  @override
+  String get type => raw['type'] as String? ?? 'unknown';
+
+  @override
+  Map<String, Object?> toJson() => raw;
+
+  factory UnknownNode.fromJson(Map<String, Object?> json) =>
+      UnknownNode(id: json['id'] as String? ?? generateNodeId(), raw: json);
 }
