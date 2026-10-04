@@ -7,10 +7,13 @@ import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:quire_core/quire_core.dart';
 import 'package:quire_markdown/quire_markdown.dart';
 
+import 'note_links.dart';
+
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
 const _underlineAttribution = Attribution('underline');
 const _strikethroughAttribution = Attribution('strikethrough');
+const _codeAttribution = Attribution('code');
 
 // Markdown block shortcuts typed at the start of a paragraph.
 //
@@ -22,7 +25,9 @@ final _mdTaskChecked = RegExp(r'^(?:-\s)?\[[xX]\]$');
 final _mdTaskUnchecked = RegExp(r'^(?:-\s)?\[\s?\]$');
 final _mdHeader = RegExp(r'^#{1,6}$');
 final _mdBlockquote = RegExp(r'^>$');
-final _mdCode = RegExp(r'^```$');
+// An optional language straight after the fence (```dart) names the block's
+// language.
+final _mdCode = RegExp(r'^```([A-Za-z0-9+#-]*)$');
 
 // Auto-linking a typed URL.
 //
@@ -43,6 +48,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   QuireEditorController({
     MutableDocument? document,
     this.copyAsMarkdown = false,
+    this.noteLinks,
   }) : document = document ?? MutableDocument(),
        composer = DocumentComposer() {
     editor = Editor(
@@ -62,6 +68,15 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   /// and emphasis. Costs literal `**` and `#` marks where the destination
   /// does not parse Markdown, hence off by default.
   final bool copyAsMarkdown;
+
+  /// How the editor reaches the host's other notes; `null` turns the `[[`
+  /// picker, the toolbar's "Link to note" row and note-link taps off.
+  final QuireNoteLinks? noteLinks;
+
+  /// Set by the editor widget: opens the note picker. [bracketsNodeId] and
+  /// [bracketsStart] locate the `[[` the user typed (to be replaced by the
+  /// link); both null when the picker was asked for explicitly.
+  void Function(String? bracketsNodeId, int? bracketsStart)? onNoteLinkRequest;
   late final Editor editor;
   late final EditHistory history;
 
@@ -136,6 +151,39 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   void toggleItalic() => _toggle(_italicAttribution);
   void toggleUnderline() => _toggle(_underlineAttribution);
   void toggleStrikethrough() => _toggle(_strikethroughAttribution);
+  void toggleCode() => _toggle(_codeAttribution);
+
+  /// Sets the selection's text colour (or arms it for the next characters
+  /// when collapsed) to [hex] — `#RRGGBB` or `AARRGGBB` — or clears it with
+  /// null. Names the colour rather than toggling, so choosing the colour
+  /// already there keeps it.
+  void setTextColor(String? hex) => _set('color', hex);
+  void setHighlight(String? hex) => _set('backgroundColor', hex);
+
+  String? get activeTextColor => _activeHex('color');
+  String? get activeHighlight => _activeHex('backgroundColor');
+
+  String? _activeHex(String name) {
+    for (final a in activeAttributions) {
+      if (a.name == name) return a.value['hex'] as String?;
+    }
+    return null;
+  }
+
+  void _set(String name, String? hex) {
+    final selection = composer.selection;
+    if (selection == null) return;
+    final request = SetAttributionRequest(
+      name,
+      hex == null ? null : {'hex': hex},
+    );
+    // Same split as [_toggle]: arming the caret isn't an undoable edit.
+    if (selection.isCollapsed) {
+      editor.execute([request]);
+    } else {
+      history.execute([request]);
+    }
+  }
 
   void toggleTaskChecked(String nodeId) =>
       history.execute([ToggleTaskCheckedRequest(nodeId)]);
@@ -811,7 +859,11 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       // before the delete below shifts anything.
       if (node is TextNode) {
         final overlappingLinks = node.text.spans.where(
-          (s) => s.attribution.name == 'link' && s.start < end && s.end > start,
+          (s) =>
+              (s.attribution.name == 'link' ||
+                  s.attribution.name == 'noteLink') &&
+              s.start < end &&
+              s.end > start,
         );
         for (final span in overlappingLinks) {
           requests.add(
@@ -822,7 +874,9 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
               span.end,
             ),
           );
-          attributions = attributions?.where((a) => a.name != 'link').toSet();
+          attributions = attributions
+              ?.where((a) => a.name != 'link' && a.name != 'noteLink')
+              .toSet();
         }
       }
       requests.add(
@@ -871,7 +925,56 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
           _maybeAutoLinkUrlBefore(nodeId, start);
         }
       });
+    } else if (start == end && insertedText == '`') {
+      scheduleMicrotask(() {
+        if (_disposed) return;
+        _maybeApplyInlineCode(nodeId, start);
+      });
+    } else if (start == end && insertedText == '[' && start > 0) {
+      scheduleMicrotask(() {
+        if (_disposed) return;
+        _maybeTriggerNoteLink(nodeId, start - 1);
+      });
     }
+  }
+
+  /// Turns `` `code` `` into inline code the moment the closing backtick is
+  /// typed at [closeAt]: both backticks go, the text between them takes the
+  /// code style, and the caret lands after it, outside the style. Its own undo
+  /// step, after the literal backtick's. Needs text between the ticks and no
+  /// further backtick adjacent, so a ``` fence is left alone.
+  void _maybeApplyInlineCode(String nodeId, int closeAt) {
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode || node.blockType == 'code') return;
+    final text = node.text.text;
+    // Needs room for an opening tick and at least one character before it.
+    if (closeAt < 2 || closeAt >= text.length || text[closeAt] != '`') return;
+    final open = text.lastIndexOf('`', closeAt - 1);
+    if (open < 0 || closeAt - open < 2) return;
+    final inner = text.substring(open + 1, closeAt);
+    if (inner.contains('`') || inner.trim().isEmpty) return;
+    if (open > 0 && text[open - 1] == '`') return;
+    if (closeAt + 1 < text.length && text[closeAt + 1] == '`') return;
+
+    DocumentSelection range(int a, int b) => DocumentSelection(
+      base: DocumentPosition(nodeId, TextNodePosition(a)),
+      extent: DocumentPosition(nodeId, TextNodePosition(b)),
+    );
+    history.transaction(() {
+      history.execute([
+        ChangeSelectionRequest(range(closeAt, closeAt + 1)),
+        DeleteSelectionRequest(),
+        ChangeSelectionRequest(range(open, open + 1)),
+        DeleteSelectionRequest(),
+        ChangeSelectionRequest(range(open, open + inner.length)),
+        SetAttributionRequest('code', const {}),
+        ChangeSelectionRequest(
+          DocumentSelection.collapsed(
+            DocumentPosition(nodeId, TextNodePosition(open + inner.length)),
+          ),
+        ),
+      ]);
+    });
   }
 
   /// Converts the paragraph at [nodeId] to
@@ -903,6 +1006,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     }
 
     String blockType;
+    String? language;
     var checked = false;
     if (_mdUnordered.hasMatch(prefix)) {
       blockType = 'listItemUnordered';
@@ -919,6 +1023,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
       blockType = 'blockquote';
     } else if (_mdCode.hasMatch(prefix)) {
       blockType = 'code';
+      language = _mdCode.firstMatch(prefix)!.group(1);
     } else {
       return false;
     }
@@ -944,6 +1049,9 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     history.transaction(() {
       replaceText(nodeId: nodeId, start: 0, end: start + 1, insertedText: '');
       applyBlockType(blockType);
+      if (language != null && language.isNotEmpty) {
+        history.execute([SetNodeMetadataRequest(nodeId, 'language', language)]);
+      }
       if (checked) history.execute([ToggleTaskCheckedRequest(nodeId)]);
       if (caret != null) {
         changeSelection(
@@ -1018,6 +1126,175 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
         changeSelection(DocumentSelection.collapsed(caretPosition));
       }
     });
+  }
+
+  /// Sets a code block's language ([id] from `kCodeLanguages`; `plain` clears
+  /// it) and puts the caret back in the block.
+  void setCodeLanguage(String nodeId, String id) {
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode || node.blockType != 'code') return;
+    history.execute([
+      SetNodeMetadataRequest(nodeId, 'language', id == 'plain' ? null : id),
+    ]);
+    requestFocus(nodeId);
+  }
+
+  // --- Note links ----------------------------------------------------------
+
+  /// Asks the editor to open the note picker at the caret (the toolbar's
+  /// "Link to note"). Does nothing when the host gave no [noteLinks].
+  void requestNoteLink() {
+    if (noteLinks == null || composer.selection == null) return;
+    onNoteLinkRequest?.call(null, null);
+  }
+
+  /// Links to [ref]: replaces the `[[` at [bracketsStart] in [bracketsNodeId]
+  /// with the note's title, or — from the toolbar — links the selected text,
+  /// or inserts the title at a bare caret. One undo step.
+  void insertNoteLink(
+    QuireNoteRef ref, {
+    String? bracketsNodeId,
+    int? bracketsStart,
+  }) {
+    final title = ref.title.trim().isEmpty ? 'Untitled' : ref.title.trim();
+    final attribution = Attribution('noteLink', value: {'id': ref.id});
+    history.transaction(() {
+      if (bracketsNodeId != null && bracketsStart != null) {
+        final node = document.getNodeById(bracketsNodeId);
+        if (node is! TextNode ||
+            node.text.text.length < bracketsStart + 2 ||
+            node.text.text.substring(bracketsStart, bracketsStart + 2) !=
+                '[[') {
+          return;
+        }
+        history.execute([
+          ChangeSelectionRequest(
+            DocumentSelection(
+              base: DocumentPosition(
+                bracketsNodeId,
+                TextNodePosition(bracketsStart),
+              ),
+              extent: DocumentPosition(
+                bracketsNodeId,
+                TextNodePosition(bracketsStart + 2),
+              ),
+            ),
+          ),
+          DeleteSelectionRequest(),
+          InsertTextRequest(
+            DocumentPosition(bracketsNodeId, TextNodePosition(bracketsStart)),
+            title,
+            {attribution},
+          ),
+        ]);
+        return;
+      }
+      final selection = composer.selection;
+      if (selection == null) return;
+      if (!selection.isCollapsed &&
+          selection.base.nodeId == selection.extent.nodeId) {
+        history.execute([SetAttributionRequest('noteLink', attribution.value)]);
+        return;
+      }
+      if (!selection.isCollapsed) {
+        history.execute([
+          ChangeSelectionRequest(
+            DocumentSelection.collapsed(selection.normalize(document).$2),
+          ),
+        ]);
+      }
+      final at = composer.selection?.extent;
+      if (at == null || at.nodePosition is! TextNodePosition) return;
+      history.execute([
+        InsertTextRequest(at, title, {attribution}),
+      ]);
+    });
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
+  }
+
+  /// If the two characters before [caretOffset] are `[[`, asks the editor to
+  /// open the picker for them.
+  void _maybeTriggerNoteLink(String nodeId, int openStart) {
+    if (noteLinks == null || onNoteLinkRequest == null) return;
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode || node.blockType == 'code') return;
+    final text = node.text.text;
+    if (openStart < 0 ||
+        openStart + 2 > text.length ||
+        text.substring(openStart, openStart + 2) != '[[') {
+      return;
+    }
+    onNoteLinkRequest!(nodeId, openStart);
+  }
+
+  // --- Block actions ---------------------------------------------------------
+
+  /// The top-level block that holds [nodeId]: the node itself, or — for a
+  /// line inside a table cell — the table.
+  String? topLevelBlockIdOf(String nodeId) {
+    if (document.getNodeById(nodeId) == null) return null;
+    if (document.isTopLevel(nodeId)) return nodeId;
+    for (final node in document.nodes) {
+      if (node is! TableNode) continue;
+      for (final row in node.rows) {
+        for (final cell in row.cells) {
+          if (cell.nodes.any((n) => n.id == nodeId)) return node.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// The block the caret is in. Read from the composer, not [focusedNodeId],
+  /// which clears while the toolbar panel has the keyboard down.
+  String? get selectedBlockId {
+    final id = composer.selection?.extent.nodeId;
+    return id == null ? null : topLevelBlockIdOf(id);
+  }
+
+  bool canMoveBlock(String blockId, {required bool up}) =>
+      document.isTopLevel(blockId) &&
+      siblingBlockHead(document, blockId, up ? -1 : 1) != null;
+
+  /// Moves [blockId] past [steps] sibling blocks (negative = up), carrying
+  /// whatever is nested under it.
+  void moveBlock(String blockId, int steps) {
+    if (steps == 0 || !document.isTopLevel(blockId)) return;
+    history.execute([MoveBlockRequest(blockId, steps)]);
+  }
+
+  void duplicateBlock(String blockId) {
+    if (!document.isTopLevel(blockId)) return;
+    history.execute([DuplicateBlockRequest(blockId)]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
+  }
+
+  void deleteBlock(String blockId) {
+    if (!document.isTopLevel(blockId)) return;
+    history.execute([DeleteBlockRequest(blockId)]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
+  }
+
+  /// Converts [blockId] to [blockType] outright (no toggle-off). Text blocks
+  /// only — an image or table has no block type.
+  void turnBlockInto(String blockId, String blockType) {
+    final node = document.getNodeById(blockId);
+    if (node is! TextNode) return;
+    final selection = composer.selection;
+    if (selection == null ||
+        selection.base.nodeId != blockId ||
+        selection.extent.nodeId != blockId) {
+      changeSelection(
+        DocumentSelection.collapsed(
+          DocumentPosition(blockId, TextNodePosition(node.text.text.length)),
+        ),
+      );
+    }
+    applyBlockType(blockType);
+    requestFocus(blockId);
   }
 
   // --- Cross-node selection operations -------------------------------

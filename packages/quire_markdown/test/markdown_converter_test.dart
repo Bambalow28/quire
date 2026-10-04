@@ -436,4 +436,27 @@ void tableTests() {
       );
     });
   });
+
+  group('code language and note links', () {
+    test('a fence language round-trips', () {
+      final doc = markdownToQuire('```dart\nvar x = 1;\n```');
+      final node = textNodeAt(doc, 0);
+      expect(node.blockType, 'code');
+      expect(node.metadata['language'], 'dart');
+      expect(quireToMarkdown(doc), '```dart\nvar x = 1;\n```');
+    });
+
+    test('a bare fence has no language', () {
+      final node = textNodeAt(markdownToQuire('```\nx\n```'), 0);
+      expect(node.metadata.containsKey('language'), isFalse);
+    });
+
+    test('a note link round-trips as a quire-note link', () {
+      final doc = markdownToQuire('see [Groceries](quire-note:n1) now');
+      final spans = textNodeAt(doc, 0).text.spans;
+      expect(spans.single.attribution.name, 'noteLink');
+      expect(spans.single.attribution.value['id'], 'n1');
+      expect(quireToMarkdown(doc), 'see [Groceries](quire-note:n1) now');
+    });
+  });
 }

@@ -13,6 +13,9 @@ final _taskRegex = RegExp(r'^\[([ xX])\]\s+(.*)$');
 final _blockquoteRegex = RegExp(r'^> ?(.*)$');
 final _fenceRegex = RegExp(r'^ {0,3}```');
 
+/// A link to another note round-trips as `[title](quire-note:ID)`.
+const _noteLinkScheme = 'quire-note:';
+
 /// Converts [markdown] text into a [MutableDocument].
 ///
 /// Covers a CommonMark subset that maps directly onto Quire's existing node
@@ -36,6 +39,7 @@ MutableDocument markdownToQuire(String markdown) {
     }
 
     if (_fenceRegex.hasMatch(line)) {
+      final language = line.trim().substring(3).trim().toLowerCase();
       final buffer = StringBuffer();
       i++;
       while (i < lines.length && !_fenceRegex.hasMatch(lines[i])) {
@@ -48,7 +52,10 @@ MutableDocument markdownToQuire(String markdown) {
         TextNode(
           id: generateNodeId(),
           text: AttributedText(buffer.toString()),
-          metadata: {'blockType': 'code'},
+          metadata: {
+            'blockType': 'code',
+            if (language.isNotEmpty) 'language': language,
+          },
         ),
       );
       continue;
@@ -192,7 +199,8 @@ String _lineFor(TextNode node) {
   final prefix = _prefixFor(node);
   // Fenced code blocks are rendered verbatim (no inline markup inside code).
   if (node.blockType == 'code') {
-    return '```\n${node.text.text}\n```';
+    final language = node.metadata['language'] as String? ?? '';
+    return '```$language\n${node.text.text}\n```';
   }
   return '$prefix${_renderInline(node.text)}';
 }
@@ -283,7 +291,15 @@ List<_InlineSegment> _parseInline(String text) {
           flushPlain();
           final inner = text.substring(i + 1, closeBracket);
           final url = text.substring(closeBracket + 2, closeParen);
-          addWrapped(inner, Attribution('link', value: {'url': url}));
+          addWrapped(
+            inner,
+            url.startsWith(_noteLinkScheme)
+                ? Attribution(
+                    'noteLink',
+                    value: {'id': url.substring(_noteLinkScheme.length)},
+                  )
+                : Attribution('link', value: {'url': url}),
+          );
           i = closeParen + 1;
           continue;
         }
@@ -399,6 +415,11 @@ String _renderRun(String run, Set<Attribution> attrs) {
 
   if (attrs.any((a) => a.name == 'strikethrough')) {
     rendered = '~~$rendered~~';
+  }
+
+  final noteLink = attrs.where((a) => a.name == 'noteLink').firstOrNull;
+  if (noteLink != null) {
+    rendered = '[$rendered]($_noteLinkScheme${noteLink.value['id'] ?? ''})';
   }
 
   final link = attrs.where((a) => a.name == 'link').firstOrNull;

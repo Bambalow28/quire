@@ -11,10 +11,13 @@ import 'package:flutter/services.dart';
 import 'package:quire_core/quire_core.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'block_menu.dart';
 import 'document_input_client.dart';
 import 'link_dialog.dart';
+import 'note_link_picker.dart';
 import 'quire_editor_controller.dart';
 import 'table_grid.dart';
+import 'syntax_highlight.dart';
 import 'table_settings_menu.dart';
 import 'text_span_builder.dart';
 
@@ -68,7 +71,15 @@ class QuireEditor extends StatefulWidget {
     this.padding,
     this.placeholder,
     this.cursorColor,
+    this.blockHandles = false,
   });
+
+  /// Shows a drag handle in a gutter at the left of the focused or hovered
+  /// block: drag it to reorder the block (and anything nested under it), tap
+  /// it for the block menu. Off by default because it reserves
+  /// [kBlockHandleGutter] of width; meant for pointer-and-keyboard layouts.
+  /// On a phone the same actions live in the toolbar's "Block actions".
+  final bool blockHandles;
 
   final QuireEditorController controller;
   final EdgeInsetsGeometry? padding;
@@ -91,6 +102,9 @@ class QuireEditor extends StatefulWidget {
 /// checklist-alignment sum is built from.
 const kCheckboxMarkSize = 18.0;
 
+/// Width reserved at the left of the editor for the block handle.
+const kBlockHandleGutter = 28.0;
+
 /// How far down that mark is scaled to sit next to body text without
 /// out-weighing it. Paint-time, so the box it centres in is unaffected.
 const kCheckboxMarkScale = 0.8;
@@ -112,6 +126,21 @@ class _QuireEditorState extends State<QuireEditor>
   /// reachable for hit-testing/geometry (`_laidOutParagraph`) — the render-
   /// only replacement for the old per-node `RenderEditable`.
   final Map<String, GlobalKey> _paragraphKeys = {};
+
+  /// One key per top-level node's whole widget, for the block handle's
+  /// geometry (a block can be an image or table, which has no paragraph).
+  final Map<String, GlobalKey> _blockKeys = {};
+
+  /// The block under the mouse, while [QuireEditor.blockHandles] is on.
+  String? _hoverBlockId;
+  Rect? _blockHandleHitRect;
+
+  /// Set while the handle is being dragged: the block, how many sibling
+  /// blocks it would move on release, and the y (editor-local) of the drop
+  /// line.
+  String? _draggingBlockId;
+  int _dragSteps = 0;
+  double? _dropLineY;
 
   /// Per-`listItemTask` node's real first-line box (top offset from the
   /// node's own top, and that line's height), measured post-frame from the
@@ -184,7 +213,8 @@ class _QuireEditorState extends State<QuireEditor>
 
   bool _isOnSelectionHandle(Offset globalPosition) =>
       (_startHandleHitRect?.contains(globalPosition) ?? false) ||
-      (_endHandleHitRect?.contains(globalPosition) ?? false);
+      (_endHandleHitRect?.contains(globalPosition) ?? false) ||
+      (_blockHandleHitRect?.contains(globalPosition) ?? false);
 
   bool get _hasVisibleSelectionHandles {
     final selection = widget.controller.composer.selection;
@@ -197,9 +227,11 @@ class _QuireEditorState extends State<QuireEditor>
     WidgetsBinding.instance.addObserver(this);
     _inputClient = DocumentInputClient(host: this);
     widget.controller.addListener(_onModelChanged);
+    widget.controller.onNoteLinkRequest = _openNoteLinkPicker;
     _editorFocusNode.addListener(_onEditorFocusChanged);
     _scrollController.addListener(() {
       _hideContextMenu();
+      if (widget.blockHandles && _draggingBlockId == null) setState(() {});
       if (_hasVisibleSelectionHandles) setState(() {});
       if (_editorFocusNode.hasFocus) {
         WidgetsBinding.instance.addPostFrameCallback(
@@ -214,6 +246,9 @@ class _QuireEditorState extends State<QuireEditor>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_onModelChanged);
+    if (widget.controller.onNoteLinkRequest == _openNoteLinkPicker) {
+      widget.controller.onNoteLinkRequest = null;
+    }
     _editorFocusNode.dispose();
     _inputClient.dispose();
     _touchHoldTimer?.cancel();
@@ -283,6 +318,13 @@ class _QuireEditorState extends State<QuireEditor>
     _inputClient.syncFromModel();
     WidgetsBinding.instance.addPostFrameCallback((_) => _maybeRequestFocus());
     WidgetsBinding.instance.addPostFrameCallback((_) => _keepCaretVisible());
+    // The block handle is placed from last frame's layout; settle it once
+    // this edit's layout is in.
+    if (widget.blockHandles) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    }
   }
 
   @override
@@ -296,7 +338,12 @@ class _QuireEditorState extends State<QuireEditor>
       );
     }
     final nodes = _visibleNodes(widget.controller.document.nodes);
-    final padding = widget.padding ?? const EdgeInsets.all(16);
+    final basePadding = (widget.padding ?? const EdgeInsets.all(16)).resolve(
+      Directionality.of(context),
+    );
+    final padding = widget.blockHandles
+        ? basePadding.copyWith(left: basePadding.left + kBlockHandleGutter)
+        : basePadding;
     // A CustomScrollView with a trailing SliverFillRemaining (rather than a
     // plain ListView) so the empty space below the last node is real,
     // tappable layout — not dead space the ListView never lays a hit-test
@@ -333,6 +380,7 @@ class _QuireEditorState extends State<QuireEditor>
       focusNode: _editorFocusNode,
       onKeyEvent: _handleKeyEvent,
       child: Listener(
+        onPointerHover: widget.blockHandles ? _onBlockHover : null,
         onPointerDown: _handlePointerDown,
         onPointerMove: _handlePointerMove,
         onPointerUp: _handlePointerUp,
@@ -355,6 +403,7 @@ class _QuireEditorState extends State<QuireEditor>
             ),
             ..._buildSelectionHandles(context),
             if (_buildCaret(context) case final caret?) caret,
+            ..._buildBlockHandle(context, basePadding),
           ],
         ),
       ),
@@ -643,9 +692,10 @@ class _QuireEditorState extends State<QuireEditor>
     );
   }
 
-  /// The URL of the `'link'` attribution actually painted under
-  /// [globalPosition], or `null` if the tap didn't land on one.
-  String? _linkUrlAtGlobalPosition(Offset globalPosition) {
+  /// The `'link'` (or, when the host handles them, `'noteLink'`) attribution
+  /// actually painted under [globalPosition], or `null` if the tap didn't land
+  /// on one.
+  Attribution? _linkAttributionAt(Offset globalPosition) {
     for (final node in widget.controller.document.nodesInDocumentOrder) {
       if (node is! TextNode) continue;
       final paragraph = _laidOutParagraph(node.id);
@@ -655,13 +705,17 @@ class _QuireEditorState extends State<QuireEditor>
       if (!rect.contains(globalPosition)) continue;
       final localPosition = globalPosition - origin;
       for (final span in node.text.spans) {
-        if (span.attribution.name != 'link') continue;
+        final name = span.attribution.name;
+        if (name != 'link' &&
+            !(name == 'noteLink' && widget.controller.noteLinks != null)) {
+          continue;
+        }
         final boxes = paragraph.getBoxesForSelection(
           TextSelection(baseOffset: span.start, extentOffset: span.end),
         );
         for (final box in boxes) {
           if (box.toRect().contains(localPosition)) {
-            return span.attribution.value['url'] as String?;
+            return span.attribution;
           }
         }
       }
@@ -764,8 +818,12 @@ class _QuireEditorState extends State<QuireEditor>
     if (moved) _resetClickStreak(); // a drag is not the first tap of a double
     if (!moved) {
       final position = _positionAt(event.position);
-      final linkUrl = _linkUrlAtGlobalPosition(event.position);
-      if (linkUrl != null) {
+      final link = _linkAttributionAt(event.position);
+      final linkUrl = link?.value['url'] as String?;
+      final noteId = link?.value['id'] as String?;
+      if (link?.name == 'noteLink' && noteId != null) {
+        widget.controller.noteLinks?.onOpen(noteId);
+      } else if (linkUrl != null) {
         launchUrl(Uri.parse(linkUrl), mode: LaunchMode.externalApplication);
       } else if (position != null && _clickCount >= 2) {
         final nodeId = position.nodeId;
@@ -1311,6 +1369,11 @@ class _QuireEditorState extends State<QuireEditor>
         .map((n) => n.id)
         .toSet();
 
+    final document = widget.controller.document;
+    _blockKeys.removeWhere((id, _) => document.getNodeById(id) == null);
+    if (_hoverBlockId != null && document.getNodeById(_hoverBlockId!) == null) {
+      _hoverBlockId = null;
+    }
     for (final staleId
         in _paragraphKeys.keys.where((id) => !liveIds.contains(id)).toList()) {
       _paragraphKeys.remove(staleId);
@@ -1611,6 +1674,38 @@ class _QuireEditorState extends State<QuireEditor>
         control: true,
         shift: true,
       ): widget.controller.toggleStrikethrough,
+      const SingleActivator(LogicalKeyboardKey.keyE, meta: true):
+          widget.controller.toggleCode,
+      const SingleActivator(LogicalKeyboardKey.keyE, control: true):
+          widget.controller.toggleCode,
+      const SingleActivator(LogicalKeyboardKey.keyD, meta: true):
+          _duplicateSelectedBlock,
+      const SingleActivator(LogicalKeyboardKey.keyD, control: true):
+          _duplicateSelectedBlock,
+      const SingleActivator(
+        LogicalKeyboardKey.arrowUp,
+        meta: true,
+        control: true,
+      ): () =>
+          _moveSelectedBlock(-1),
+      const SingleActivator(
+        LogicalKeyboardKey.arrowDown,
+        meta: true,
+        control: true,
+      ): () =>
+          _moveSelectedBlock(1),
+      const SingleActivator(
+        LogicalKeyboardKey.arrowUp,
+        control: true,
+        shift: true,
+      ): () =>
+          _moveSelectedBlock(-1),
+      const SingleActivator(
+        LogicalKeyboardKey.arrowDown,
+        control: true,
+        shift: true,
+      ): () =>
+          _moveSelectedBlock(1),
       const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
           widget.controller.undo,
       const SingleActivator(LogicalKeyboardKey.keyZ, control: true):
@@ -1811,9 +1906,256 @@ class _QuireEditorState extends State<QuireEditor>
     );
   }
 
+  // --- Blocks: handle, drag, note links, code language ---------------------
+
+  void _moveSelectedBlock(int steps) {
+    final id = widget.controller.selectedBlockId;
+    if (id != null) widget.controller.moveBlock(id, steps);
+  }
+
+  void _duplicateSelectedBlock() {
+    final id = widget.controller.selectedBlockId;
+    if (id != null) widget.controller.duplicateBlock(id);
+  }
+
+  Future<void> _openNoteLinkPicker(String? nodeId, int? bracketsStart) async {
+    final links = widget.controller.noteLinks;
+    if (links == null || !mounted) return;
+    final ref = await showNoteLinkPicker(context, links);
+    if (!mounted) return;
+    if (ref == null) {
+      // Dismissed: leave any typed `[[` as text and put the caret back.
+      if (nodeId != null) widget.controller.requestFocus(nodeId);
+      return;
+    }
+    widget.controller.insertNoteLink(
+      ref,
+      bracketsNodeId: nodeId,
+      bracketsStart: bracketsStart,
+    );
+  }
+
+  Future<void> _pickCodeLanguage(String nodeId) async {
+    final node = widget.controller.document.getNodeById(nodeId);
+    if (node is! TextNode) return;
+    final picked = await showCodeLanguageSheet(
+      context,
+      node.metadata['language'] as String?,
+    );
+    if (picked == null || !mounted) return;
+    widget.controller.setCodeLanguage(nodeId, picked);
+  }
+
+  /// Editor-local rect of a top-level node's whole widget, or null when it
+  /// isn't built or laid out (scrolled far off, say).
+  Rect? _blockLocalRect(String id) {
+    final box = _blockKeys[id]?.currentContext?.findRenderObject();
+    final editorBox = _editorKey.currentContext?.findRenderObject();
+    if (box is! RenderBox ||
+        !box.attached ||
+        !box.hasSize ||
+        editorBox is! RenderBox ||
+        !editorBox.attached) {
+      return null;
+    }
+    final topLeft = editorBox.globalToLocal(box.localToGlobal(Offset.zero));
+    return topLeft & box.size;
+  }
+
+  /// [id]'s block as one rect: its own widget plus every built node nested
+  /// under it.
+  Rect? _blockExtentRect(String id) {
+    Rect? union;
+    for (final node in blockOf(widget.controller.document, id)) {
+      final rect = _blockLocalRect(node.id);
+      if (rect != null) {
+        union = union == null ? rect : union.expandToInclude(rect);
+      }
+    }
+    return union;
+  }
+
+  void _onBlockHover(PointerHoverEvent event) {
+    if (_draggingBlockId != null) return;
+    final editorBox = _editorKey.currentContext?.findRenderObject();
+    if (editorBox is! RenderBox || !editorBox.attached) return;
+    final y = editorBox.globalToLocal(event.position).dy;
+    String? hit;
+    for (final node in widget.controller.document.nodes) {
+      final rect = _blockLocalRect(node.id);
+      if (rect != null && y >= rect.top && y < rect.bottom) {
+        hit = node.id;
+        break;
+      }
+    }
+    // Moving over the handle gutter or between blocks keeps the last block.
+    if (hit != null && hit != _hoverBlockId) {
+      setState(() => _hoverBlockId = hit);
+    }
+  }
+
+  List<Widget> _buildBlockHandle(BuildContext context, EdgeInsets base) {
+    _blockHandleHitRect = null;
+    if (!widget.blockHandles) return const [];
+    final controller = widget.controller;
+    final id =
+        _draggingBlockId ??
+        _hoverBlockId ??
+        (_editorFocusNode.hasFocus ? controller.selectedBlockId : null);
+    if (id == null || !controller.document.isTopLevel(id)) return const [];
+    final rect = _blockLocalRect(id);
+    final editorBox = _editorKey.currentContext?.findRenderObject();
+    if (rect == null || editorBox is! RenderBox || !editorBox.attached) {
+      return const [];
+    }
+
+    const size = 24.0;
+    // Centre on the first text line when there is one.
+    var top = rect.top + 2;
+    final paragraph = _laidOutParagraph(id);
+    if (paragraph != null) {
+      final lineHeight = paragraph.getFullHeightForCaret(
+        const TextPosition(offset: 0),
+      );
+      final paragraphTop = editorBox
+          .globalToLocal(paragraph.localToGlobal(Offset.zero))
+          .dy;
+      top = paragraphTop + (lineHeight - size) / 2;
+    }
+    final left = base.left;
+    _blockHandleHitRect = Rect.fromPoints(
+      editorBox.localToGlobal(Offset(left, top)),
+      editorBox.localToGlobal(Offset(left + size, top + size)),
+    );
+
+    final theme = Theme.of(context);
+    return [
+      Positioned(
+        key: const ValueKey('quire-block-handle'),
+        left: left,
+        top: top,
+        width: size,
+        height: size,
+        child: Tooltip(
+          message: 'Drag to move · click for options',
+          child: MouseRegion(
+            cursor: _draggingBlockId == null
+                ? SystemMouseCursors.grab
+                : SystemMouseCursors.grabbing,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => showBlockMenu(context, controller, id),
+              onVerticalDragStart: (_) => setState(() {
+                _draggingBlockId = id;
+                _dragSteps = 0;
+                _dropLineY = null;
+              }),
+              onVerticalDragUpdate: (d) => _updateBlockDrag(d.globalPosition),
+              onVerticalDragEnd: (_) => _finishBlockDrag(),
+              onVerticalDragCancel: _cancelBlockDrag,
+              child: Icon(
+                Icons.drag_indicator,
+                size: 18,
+                color: theme.hintColor,
+              ),
+            ),
+          ),
+        ),
+      ),
+      if (_draggingBlockId != null && _dropLineY != null && _dragSteps != 0)
+        Positioned(
+          left: left,
+          right: base.right,
+          top: _dropLineY! - 1,
+          height: 2,
+          child: IgnorePointer(
+            child: ColoredBox(color: theme.colorScheme.primary),
+          ),
+        ),
+    ];
+  }
+
+  /// The sibling blocks [id] could swap places with, top to bottom, with [id]
+  /// among them.
+  List<String> _siblingBlockIds(String id) {
+    final document = widget.controller.document;
+    final before = <String>[];
+    for (
+      var cur = id, s = siblingBlockHead(document, cur, -1);
+      s != null;
+      cur = s.id, s = siblingBlockHead(document, cur, -1)
+    ) {
+      before.insert(0, s.id);
+    }
+    final after = <String>[];
+    for (
+      var cur = id, s = siblingBlockHead(document, cur, 1);
+      s != null;
+      cur = s.id, s = siblingBlockHead(document, cur, 1)
+    ) {
+      after.add(s.id);
+    }
+    return [...before, id, ...after];
+  }
+
+  void _updateBlockDrag(Offset globalPosition) {
+    final id = _draggingBlockId;
+    final editorBox = _editorKey.currentContext?.findRenderObject();
+    if (id == null || editorBox is! RenderBox || !editorBox.attached) return;
+    final y = editorBox.globalToLocal(globalPosition).dy;
+    final siblings = _siblingBlockIds(id);
+    final here = siblings.indexOf(id);
+    String? target;
+    Rect? targetRect;
+    for (final sibling in siblings) {
+      final rect = _blockExtentRect(sibling);
+      if (rect == null) continue;
+      // The first built block at or below the pointer; past the last one the
+      // pointer is below everything, so the last built block is the target.
+      target = sibling;
+      targetRect = rect;
+      if (y < rect.bottom) break;
+    }
+    if (target == null || targetRect == null) return;
+    final steps = siblings.indexOf(target) - here;
+    setState(() {
+      _dragSteps = steps;
+      _dropLineY = steps < 0 ? targetRect!.top : targetRect!.bottom;
+    });
+  }
+
+  void _finishBlockDrag() {
+    final id = _draggingBlockId;
+    final steps = _dragSteps;
+    setState(() {
+      _draggingBlockId = null;
+      _dragSteps = 0;
+      _dropLineY = null;
+    });
+    if (id != null && steps != 0) widget.controller.moveBlock(id, steps);
+  }
+
+  void _cancelBlockDrag() {
+    if (_draggingBlockId == null) return;
+    setState(() {
+      _draggingBlockId = null;
+      _dragSteps = 0;
+      _dropLineY = null;
+    });
+  }
+
   // --- Per-node-type widgets -----------------------------------------------
 
   Widget _buildNode(BuildContext context, DocumentNode node) {
+    final built = _buildNodeContent(context, node);
+    if (!widget.controller.document.isTopLevel(node.id)) return built;
+    return KeyedSubtree(
+      key: _blockKeys.putIfAbsent(node.id, GlobalKey.new),
+      child: built,
+    );
+  }
+
+  Widget _buildNodeContent(BuildContext context, DocumentNode node) {
     if (node is TextNode) return _buildTextNode(context, node);
     final block = _buildBlockNode(context, node);
     if (node.indent == 0) return block;
@@ -2037,6 +2379,9 @@ class _QuireEditorState extends State<QuireEditor>
               style: style,
               context: context,
               composingRange: composingRange,
+              codeLanguage: node.blockType == 'code'
+                  ? node.metadata['language'] as String?
+                  : null,
             ),
           ),
         ),
@@ -2090,12 +2435,22 @@ class _QuireEditorState extends State<QuireEditor>
       case 'code':
         return Container(
           margin: EdgeInsets.only(left: indentPadding, bottom: 4),
-          padding: const EdgeInsets.all(8),
+          padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
           decoration: BoxDecoration(
             color: theme.colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(4),
           ),
-          child: row,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _CodeBlockHeader(
+                language: node.metadata['language'] as String?,
+                text: node.text.text,
+                onPickLanguage: () => _pickCodeLanguage(node.id),
+              ),
+              row,
+            ],
+          ),
         );
       case 'toggleList':
         return Padding(
@@ -2311,7 +2666,10 @@ class _QuireEditorState extends State<QuireEditor>
       case 'blockquote':
         return base.copyWith(fontStyle: FontStyle.italic);
       case 'code':
-        return base.copyWith(fontFamily: 'monospace');
+        return base.copyWith(
+          fontFamily: kCodeFontFamily,
+          fontFamilyFallback: kCodeFontFallback,
+        );
       default:
         return base;
     }
@@ -2434,5 +2792,89 @@ class _QuireEditorState extends State<QuireEditor>
       }
     }
     return count;
+  }
+}
+
+/// The strip above a code block: the language (tap to change it) and a copy
+/// button that confirms with a tick.
+class _CodeBlockHeader extends StatefulWidget {
+  const _CodeBlockHeader({
+    required this.language,
+    required this.text,
+    required this.onPickLanguage,
+  });
+
+  final String? language;
+  final String text;
+  final VoidCallback onPickLanguage;
+
+  @override
+  State<_CodeBlockHeader> createState() => _CodeBlockHeaderState();
+}
+
+class _CodeBlockHeaderState extends State<_CodeBlockHeader> {
+  Timer? _resetTimer;
+  bool _copied = false;
+
+  @override
+  void dispose() {
+    _resetTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    await Clipboard.setData(ClipboardData(text: widget.text));
+    if (!mounted) return;
+    setState(() => _copied = true);
+    _resetTimer?.cancel();
+    _resetTimer = Timer(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final muted = theme.hintColor;
+    final label = theme.textTheme.labelMedium?.copyWith(color: muted);
+    return Row(
+      children: [
+        Semantics(
+          button: true,
+          label: 'Code language, ${languageLabel(widget.language)}',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: widget.onPickLanguage,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(languageLabel(widget.language), style: label),
+                  Icon(Icons.expand_more, size: 16, color: muted),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const Spacer(),
+        Semantics(
+          button: true,
+          label: _copied ? 'Copied' : 'Copy code',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: widget.text.isEmpty ? null : _copy,
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Icon(
+                _copied ? Icons.check : Icons.content_copy,
+                size: 16,
+                color: _copied ? theme.colorScheme.primary : muted,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

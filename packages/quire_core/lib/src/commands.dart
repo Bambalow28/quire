@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'attributed_text.dart';
 import 'document.dart';
 import 'editor.dart';
@@ -622,6 +624,7 @@ Iterable<TextNode> _textNodesInSelection(EditContext context) sync* {
 Map<String, Object?> _metadataForBlockType(TextNode node, String blockType) {
   final metadata = {...node.metadata, 'blockType': blockType};
   if (blockType != 'listItemTask') metadata.remove('checked');
+  if (blockType != 'code') metadata.remove('language');
   return metadata;
 }
 
@@ -956,6 +959,291 @@ class _ToggleCollapsedCommand extends EditCommand {
   }
 }
 
+// --- SetAttributionRequest -----------------------------------------------
+
+/// Applies the attribution [name] with [value] over the selection, replacing
+/// any other value of the same name — or clears it when [value] is null.
+/// Unlike [ToggleAttributionRequest] this *names* the state it wants, so
+/// picking the colour already on the text does not remove it. With a
+/// collapsed selection it arms (or disarms) the composing attributions.
+class SetAttributionRequest extends EditRequest {
+  SetAttributionRequest(this.name, this.value);
+  final String name;
+  final Map<String, Object?>? value;
+}
+
+class _SetAttributionCommand extends EditCommand {
+  _SetAttributionCommand(this.request);
+  final SetAttributionRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final selection = context.composer.selection;
+    if (selection == null) return;
+    final value = request.value;
+    final attribution = value == null
+        ? null
+        : Attribution(request.name, value: value);
+
+    if (selection.isCollapsed) {
+      context.composer.composingAttributions.removeWhere(
+        (x) => x.name == request.name,
+      );
+      if (attribution != null) {
+        context.composer.composingAttributions.add(attribution);
+      }
+      executor.emit(ComposingAttributionsChanged());
+      return;
+    }
+
+    final document = context.document;
+    final (startPos, endPos) = selection.normalize(document);
+    final startIndex = document.getNodeIndexById(startPos.nodeId);
+    final endIndex = document.getNodeIndexById(endPos.nodeId);
+    final changedIds = <String>[];
+    for (var i = startIndex; i <= endIndex; i++) {
+      final node = document.getNodeAt(i);
+      if (node is! TextNode) continue;
+      final segStart = i == startIndex
+          ? (startPos.nodePosition as TextNodePosition).offset
+          : 0;
+      final segEnd = i == endIndex
+          ? (endPos.nodePosition as TextNodePosition).offset
+          : node.text.text.length;
+      if (segEnd <= segStart) continue;
+      if (attribution != null) {
+        node.text = node.text.addAttribution(attribution, segStart, segEnd);
+      } else {
+        // removeAttribution matches by equality, so strip each distinct
+        // value of this name that overlaps the range.
+        for (final span in node.text.spans.toList()) {
+          if (span.attribution.name != request.name) continue;
+          node.text = node.text.removeAttribution(
+            span.attribution,
+            segStart,
+            segEnd,
+          );
+        }
+      }
+      changedIds.add(node.id);
+    }
+    if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));
+  }
+}
+
+// --- SetNodeMetadataRequest ------------------------------------------------
+
+/// Sets (or, with a null [value], removes) one metadata key on [nodeId] — a
+/// code block's `language`, say.
+class SetNodeMetadataRequest extends EditRequest {
+  SetNodeMetadataRequest(this.nodeId, this.key, this.value);
+  final String nodeId;
+  final String key;
+  final Object? value;
+}
+
+class _SetNodeMetadataCommand extends EditCommand {
+  _SetNodeMetadataCommand(this.request);
+  final SetNodeMetadataRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final node = context.document.getNodeById(request.nodeId);
+    if (node == null) return;
+    final metadata = {...node.metadata};
+    if (request.value == null) {
+      metadata.remove(request.key);
+    } else {
+      metadata[request.key] = request.value;
+    }
+    node.metadata = metadata;
+    executor.emit(DocumentEdited([node.id]));
+  }
+}
+
+// --- Block moves, duplicates and deletes ----------------------------------
+
+/// The nodes that travel with [nodeId] when it is moved, copied or deleted as
+/// one block: the node itself plus every node right after it, in the same
+/// container, indented deeper (a toggle's contents, a list item's children).
+List<DocumentNode> blockOf(MutableDocument document, String nodeId) {
+  final container = document.containerOf(nodeId);
+  if (container == null) return const [];
+  final start = container.indexWhere((n) => n.id == nodeId);
+  if (start < 0) return const [];
+  final indent = container[start].indent;
+  var end = start + 1;
+  while (end < container.length && container[end].indent > indent) {
+    end++;
+  }
+  return container.sublist(start, end);
+}
+
+/// The first node of the sibling block just before (`-1`) or after (`1`)
+/// [nodeId]'s block, or null when there is none at the same depth — the first
+/// child of a toggle has no sibling above it, and moving out of a container
+/// is not a move this editor offers.
+DocumentNode? siblingBlockHead(
+  MutableDocument document,
+  String nodeId,
+  int direction,
+) {
+  final container = document.containerOf(nodeId);
+  if (container == null) return null;
+  final index = container.indexWhere((n) => n.id == nodeId);
+  if (index < 0) return null;
+  final indent = container[index].indent;
+  if (direction < 0) {
+    for (var i = index - 1; i >= 0; i--) {
+      if (container[i].indent == indent) return container[i];
+      if (container[i].indent < indent) return null;
+    }
+    return null;
+  }
+  final end = index + blockOf(document, nodeId).length;
+  if (end >= container.length) return null;
+  return container[end].indent == indent ? container[end] : null;
+}
+
+/// Moves [nodeId]'s block past [steps] sibling blocks (negative = up). Stops
+/// at the first end it hits rather than failing, so a drag that overshoots
+/// lands on the last slot.
+class MoveBlockRequest extends EditRequest {
+  MoveBlockRequest(this.nodeId, this.steps);
+  final String nodeId;
+  final int steps;
+}
+
+class _MoveBlockCommand extends EditCommand {
+  _MoveBlockCommand(this.request);
+  final MoveBlockRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final document = context.document;
+    if (request.steps == 0) return;
+    final direction = request.steps < 0 ? -1 : 1;
+    final changedIds = <String>{};
+    for (var i = 0; i < request.steps.abs(); i++) {
+      final sibling = siblingBlockHead(document, request.nodeId, direction);
+      if (sibling == null) break;
+      final container = document.containerOf(request.nodeId)!;
+      final block = blockOf(document, request.nodeId);
+      final other = blockOf(document, sibling.id);
+      final from = container.indexOf(block.first);
+      final lo = direction < 0 ? container.indexOf(other.first) : from;
+      final hi = direction < 0
+          ? from + block.length
+          : container.indexOf(other.first) + other.length;
+      final first = direction < 0 ? block : other;
+      final second = direction < 0 ? other : block;
+      container.replaceRange(lo, hi, [...first, ...second]);
+      changedIds.addAll([...block, ...other].map((n) => n.id));
+    }
+    if (changedIds.isEmpty) return;
+    // The container list was reordered in place; refresh the order caches.
+    document.reindexNestedNodes();
+    executor.emit(DocumentEdited(changedIds.toList()));
+  }
+}
+
+void _reissueIds(DocumentNode node) {
+  node.id = generateNodeId();
+  if (node is TableNode) {
+    for (final row in node.rows) {
+      for (final cell in row.cells) {
+        for (final n in cell.nodes) {
+          _reissueIds(n);
+        }
+      }
+    }
+  }
+}
+
+/// Inserts a copy of [nodeId]'s block right after it, with fresh ids, and
+/// puts the caret in the copy's first text line.
+class DuplicateBlockRequest extends EditRequest {
+  DuplicateBlockRequest(this.nodeId);
+  final String nodeId;
+}
+
+class _DuplicateBlockCommand extends EditCommand {
+  _DuplicateBlockCommand(this.request);
+  final DuplicateBlockRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final document = context.document;
+    final block = blockOf(document, request.nodeId);
+    if (block.isEmpty) return;
+    final copies = [
+      for (final n in block)
+        nodeFromJson(
+          jsonDecode(jsonEncode(n.toJson())) as Map<String, Object?>,
+        ),
+    ];
+    var anchor = block.last.id;
+    for (final copy in copies) {
+      _reissueIds(copy);
+      document.insertNodeAfter(anchor, copy);
+      anchor = copy.id;
+    }
+    final firstText = [
+      for (final c in copies)
+        if (c is TextNode) c,
+    ].firstOrNull;
+    if (firstText != null) {
+      context.composer.selection = DocumentSelection.collapsed(
+        DocumentPosition(firstText.id, const TextNodePosition(0)),
+      );
+      executor.emit(SelectionChanged());
+    }
+    executor.emit(DocumentEdited(copies.map((n) => n.id).toList()));
+  }
+}
+
+/// Deletes [nodeId]'s whole block. The document is never left without a line
+/// to type in: if nothing remains, an empty paragraph takes its place.
+class DeleteBlockRequest extends EditRequest {
+  DeleteBlockRequest(this.nodeId);
+  final String nodeId;
+}
+
+class _DeleteBlockCommand extends EditCommand {
+  _DeleteBlockCommand(this.request);
+  final DeleteBlockRequest request;
+
+  @override
+  void execute(EditContext context, CommandExecutor executor) {
+    final document = context.document;
+    final block = blockOf(document, request.nodeId);
+    if (block.isEmpty) return;
+    final container = document.containerOf(request.nodeId)!;
+    final index = container.indexOf(block.first);
+    final ids = block.map((n) => n.id).toList();
+    for (final n in block) {
+      document.deleteNode(n.id);
+    }
+    final changed = [...ids];
+    DocumentNode? landing;
+    if (container.isEmpty) {
+      landing = TextNode(id: generateNodeId(), text: AttributedText(''));
+      container.add(landing);
+      document.reindexNestedNodes();
+      changed.add(landing.id);
+    } else {
+      landing = container[index < container.length ? index : index - 1];
+    }
+    context.composer.selection = landing is TextNode
+        ? DocumentSelection.collapsed(
+            DocumentPosition(landing.id, const TextNodePosition(0)),
+          )
+        : null;
+    executor.emit(SelectionChanged());
+    executor.emit(DocumentEdited(changed));
+  }
+}
+
 // --- Default handlers ------------------------------------------------
 
 final List<EditRequestHandler> defaultRequestHandlers = [
@@ -1000,5 +1288,15 @@ final List<EditRequestHandler> defaultRequestHandlers = [
   (request) => request is RemoveAttributionInRangeRequest
       ? _RemoveAttributionInRangeCommand(request)
       : null,
+  (request) =>
+      request is SetAttributionRequest ? _SetAttributionCommand(request) : null,
+  (request) => request is SetNodeMetadataRequest
+      ? _SetNodeMetadataCommand(request)
+      : null,
+  (request) => request is MoveBlockRequest ? _MoveBlockCommand(request) : null,
+  (request) =>
+      request is DuplicateBlockRequest ? _DuplicateBlockCommand(request) : null,
+  (request) =>
+      request is DeleteBlockRequest ? _DeleteBlockCommand(request) : null,
   ...tableRequestHandlers,
 ];

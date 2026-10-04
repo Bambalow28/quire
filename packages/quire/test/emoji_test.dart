@@ -37,7 +37,7 @@ void main() {
 
       await tester.tap(find.byTooltip('More options'));
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.drag(find.byType(ListView), const Offset(0, -700));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Emoji').first);
       await tester.pumpAndSettle();
@@ -78,7 +78,7 @@ void main() {
 
     await tester.tap(find.byTooltip('More options'));
     await tester.pumpAndSettle();
-    await tester.drag(find.byType(ListView), const Offset(0, -400));
+    await tester.drag(find.byType(ListView), const Offset(0, -700));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Emoji').first);
     await tester.pumpAndSettle();
@@ -228,7 +228,7 @@ void main() {
 
       await tester.tap(find.byTooltip('More options'));
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.drag(find.byType(ListView), const Offset(0, -700));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Emoji').first);
       await tester.pumpAndSettle();
@@ -300,7 +300,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.add));
       tester.view.viewInsets = FakeViewPadding.zero;
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.drag(find.byType(ListView), const Offset(0, -700));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Emoji').first);
       await tester.pumpAndSettle();
@@ -366,7 +366,7 @@ void main() {
       await tester.tap(find.byIcon(Icons.add));
       tester.view.viewInsets = FakeViewPadding.zero;
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.drag(find.byType(ListView), const Offset(0, -700));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Emoji').first);
       await tester.pumpAndSettle();
@@ -407,7 +407,7 @@ void main() {
 
       await tester.tap(find.byTooltip('More options'));
       await tester.pumpAndSettle();
-      await tester.drag(find.byType(ListView), const Offset(0, -400));
+      await tester.drag(find.byType(ListView), const Offset(0, -700));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Emoji').first);
       await tester.pumpAndSettle();

@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:quire_core/quire_core.dart';
 
+import 'block_menu.dart';
+import 'format_swatches.dart';
 import 'insert_table_dialog.dart';
 import 'link_dialog.dart';
 import 'quire_editor_controller.dart';
@@ -19,6 +21,7 @@ bool get _hasSoftwareKeyboard =>
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
 const _underlineAttribution = Attribution('underline');
+const _codeAttribution = Attribution('code');
 
 /// Alignments the toolbar offers, in the order the icon row shows them.
 const _alignments = <(String, IconData, String)>[
@@ -515,6 +518,50 @@ class _OptionsPanel extends StatelessWidget {
             block('Checklist', 'listItemTask', Icons.checklist),
             block('Toggle list', 'toggleList', Icons.arrow_drop_down_circle),
             block('Callout', 'callout', Icons.rectangle_outlined),
+            // The swatches apply to the selection (or arm the
+            // caret) and the panel stays open so several can be tried.
+            SwatchRow(
+              label: 'Text colour',
+              icon: Icons.format_color_text,
+              palette: kTextColors,
+              active: controller.activeTextColor,
+              onPick: controller.setTextColor,
+            ),
+            SwatchRow(
+              label: 'Highlight',
+              icon: Icons.format_color_fill,
+              palette: kHighlightColors,
+              active: controller.activeHighlight,
+              highlight: true,
+              onPick: controller.setHighlight,
+            ),
+            _OptionRow(
+              label: 'Inline code',
+              icon: Icons.code,
+              selected: controller.activeAttributions.contains(
+                _codeAttribution,
+              ),
+              onTap: controller.toggleCode,
+            ),
+            if (controller.noteLinks != null)
+              _OptionRow(
+                label: 'Link to note',
+                icon: Icons.description_outlined,
+                onTap: () {
+                  onClose();
+                  // After the panel has handed the keyboard back, so the
+                  // picker's sheet doesn't open under a closing panel.
+                  WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => controller.requestNoteLink(),
+                  );
+                },
+              ),
+            if (controller.selectedBlockId case final blockId?)
+              _OptionRow(
+                label: 'Block actions',
+                icon: Icons.more_horiz,
+                onTap: () => showBlockMenu(context, controller, blockId),
+              ),
             _OptionRow(
               label: 'Decrease indent',
               icon: Icons.format_indent_decrease,

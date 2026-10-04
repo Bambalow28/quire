@@ -1,8 +1,11 @@
 /// Flutter editing UI for the Quire rich text editor.
 library;
 
+export 'src/block_menu.dart' show showBlockMenu;
 export 'src/insert_table_dialog.dart';
 export 'src/node_text_controller.dart';
+export 'src/note_links.dart';
+export 'src/syntax_highlight.dart' show kCodeLanguages, canonicalLanguage;
 export 'src/quire_find_bar.dart';
 export 'src/quire_editor.dart';
 export 'src/quire_editor_controller.dart';

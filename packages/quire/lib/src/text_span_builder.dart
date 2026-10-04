@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:quire_core/quire_core.dart';
 
+import 'syntax_highlight.dart';
+
 /// U+200B — painted when a text node has no text of its own, purely so it
 /// still has a line box for caret placement/height measurement. Render-only:
 /// it is never part of the model, and any hit-tested offset against it is
@@ -11,6 +13,28 @@ import 'package:quire_core/quire_core.dart';
 /// this rewrite keeps working unchanged (see `document_input_client.dart`'s
 /// own `_imeSentinel`); this one is private and purely a rendering detail.
 const _emptyNodeRenderPlaceholder = '​';
+
+/// The face for inline code and code blocks. Flutter has no generic
+/// `monospace` family on Apple platforms, so name Menlo first and let other
+/// platforms fall through to theirs.
+const kCodeFontFamily = 'Menlo';
+const kCodeFontFallback = ['Courier New', 'monospace'];
+
+TextStyle syntaxStyle(SyntaxToken token, Brightness brightness) {
+  final dark = brightness == Brightness.dark;
+  final color = switch (token) {
+    SyntaxToken.keyword => dark ? 0xFFCE93D8 : 0xFF8E24AA,
+    SyntaxToken.string => dark ? 0xFFA5D6A7 : 0xFF2E7D32,
+    SyntaxToken.number => dark ? 0xFFFFB74D : 0xFFE65100,
+    SyntaxToken.comment => dark ? 0xFF90A4AE : 0xFF78909C,
+    SyntaxToken.type => dark ? 0xFF81D4FA : 0xFF1565C0,
+    SyntaxToken.literal => dark ? 0xFFF48FB1 : 0xFFAD1457,
+  };
+  return TextStyle(
+    color: Color(color),
+    fontStyle: token == SyntaxToken.comment ? FontStyle.italic : null,
+  );
+}
 
 /// Builds the [TextSpan] for one [TextNode]'s rendered text: the node's own
 /// [AttributedText] styled by its attributions (bold/italic/link/etc, same
@@ -26,6 +50,7 @@ TextSpan buildAttributedTextSpan({
   required TextStyle style,
   required BuildContext context,
   TextRange? composingRange,
+  String? codeLanguage,
 }) {
   if (text.text.isEmpty) {
     return TextSpan(text: _emptyNodeRenderPlaceholder, style: style);
@@ -39,7 +64,11 @@ TextSpan buildAttributedTextSpan({
       composingRange.start >= 0 &&
       composingRange.end <= text.text.length;
 
-  if (spans.isEmpty && !validComposing) {
+  final syntax = codeLanguage == null
+      ? const <SyntaxRun>[]
+      : highlight(text.text, codeLanguage);
+
+  if (spans.isEmpty && !validComposing && syntax.isEmpty) {
     return TextSpan(text: text.text, style: style);
   }
 
@@ -55,6 +84,12 @@ TextSpan buildAttributedTextSpan({
     cutPoints.add(composingRange.start);
     cutPoints.add(composingRange.end);
   }
+  for (final run in syntax) {
+    cutPoints.add(run.start);
+    cutPoints.add(run.end);
+  }
+  final brightness = Theme.of(context).brightness;
+  var syntaxIndex = 0;
   final sortedCuts = cutPoints.toList()..sort();
 
   final children = <TextSpan>[];
@@ -65,7 +100,19 @@ TextSpan buildAttributedTextSpan({
     final covering = spans
         .where((s) => s.start <= start && s.end >= end)
         .map((s) => s.attribution);
+    // Syntax colour sits under the user's own styling, so a colour they
+    // chose on a code line still wins.
+    while (syntaxIndex < syntax.length && syntax[syntaxIndex].end <= start) {
+      syntaxIndex++;
+    }
+    final token =
+        syntaxIndex < syntax.length && syntax[syntaxIndex].start <= start
+        ? syntax[syntaxIndex].token
+        : null;
     var runStyle = _mergeAttributionStyles(covering, context);
+    if (token != null) {
+      runStyle = syntaxStyle(token, brightness).merge(runStyle);
+    }
     if (validComposing &&
         start >= composingRange.start &&
         end <= composingRange.end) {
@@ -127,7 +174,8 @@ TextStyle _applyAttribution(
     case 'code':
       return style.merge(
         TextStyle(
-          fontFamily: 'monospace',
+          fontFamily: kCodeFontFamily,
+          fontFamilyFallback: kCodeFontFallback,
           backgroundColor: Theme.of(
             context,
           ).colorScheme.surfaceContainerHighest,
@@ -140,6 +188,17 @@ TextStyle _applyAttribution(
         const TextStyle(
           color: Colors.blue,
           decoration: TextDecoration.underline,
+        ),
+      );
+    case 'noteLink':
+      // The accent, with a dotted underline: reads as "goes to another note",
+      // distinct from an external link's blue.
+      return style.merge(
+        TextStyle(
+          color: Theme.of(context).colorScheme.primary,
+          decoration: TextDecoration.underline,
+          decorationStyle: TextDecorationStyle.dotted,
+          decorationColor: Theme.of(context).colorScheme.primary,
         ),
       );
     case 'color':
