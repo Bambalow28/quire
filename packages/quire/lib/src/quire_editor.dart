@@ -847,7 +847,12 @@ class _QuireEditorState extends State<QuireEditor>
         // "move the caret", which is what every native text field does.
         widget.controller.requestFocus(position.nodeId);
         _showContextMenu();
-      } else if (position != null && _dragBase == null) {
+      } else if (position != null &&
+          // A mouse/trackpad press always arms [_dragBase] (so a drag can
+          // select), which used to make a plain click never place the caret.
+          // A touch long-press arms it too, and its release must keep the
+          // word selection — so only touch is gated on it.
+          (_dragBase == null || _lastPointerKind != PointerDeviceKind.touch)) {
         widget.controller.requestFocus(position.nodeId);
         final nodeId = position.nodeId;
         final offset = (position.nodePosition as TextNodePosition).offset;

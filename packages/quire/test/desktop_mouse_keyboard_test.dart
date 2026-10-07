@@ -90,6 +90,10 @@ void main() {
     final selection = controller.composer.selection;
     expect(selection, isNotNull);
     expect(selection!.isCollapsed, isTrue);
+    // ...and at the clicked spot, not wherever focus happened to land.
+    final offset = (selection.extent.nodePosition as TextNodePosition).offset;
+    expect(offset, greaterThan(0));
+    expect(offset, lessThan('hello world'.length));
   });
 
   testWidgets('two clicks far apart do not count as a double-click', (
