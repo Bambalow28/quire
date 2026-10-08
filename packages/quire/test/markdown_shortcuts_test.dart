@@ -258,4 +258,32 @@ void main() {
         .toList();
     expect(texts, ['---', 'foo']);
   });
+
+  testWidgets('"2. " under a numbered item rejoins that list at its indent', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'x',
+            text: AttributedText('one'),
+            metadata: const {'blockType': 'listItemOrdered'},
+          ),
+          TextNode(
+            id: 'a',
+            text: AttributedText(''),
+            metadata: const {'indent': 1},
+          ),
+        ],
+      ),
+    );
+    await _pumpEditor(tester, controller);
+
+    await _typeThenSpace(tester, '2.');
+
+    final node = controller.document.getNodeById('a') as TextNode;
+    expect(node.blockType, 'listItemOrdered');
+    expect(node.indent, 0);
+  });
 }

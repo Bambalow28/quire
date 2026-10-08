@@ -366,6 +366,19 @@ const _listBlockTypes = {
 
 const _containerBlockTypes = {'toggleList', 'callout'};
 
+/// Whether outdenting [node] would pull it out of the toggle/callout it
+/// belongs to — true when its direct parent is a container one level up.
+bool _leavesContainer(MutableDocument document, TextNode node) {
+  final index = document.getNodeIndexById(node.id);
+  for (var i = index - 1; i >= 0; i--) {
+    final candidate = document.getNodeAt(i);
+    if (candidate is! TextNode || candidate.indent >= node.indent) continue;
+    return _containerBlockTypes.contains(candidate.blockType) &&
+        node.indent == candidate.indent + 1;
+  }
+  return false;
+}
+
 /// Whether [node] is nested — directly or transitively — under a
 /// `toggleList`/`callout` ancestor. Walks the flat node list backward to
 /// the nearest preceding node at a shallower indent (`node`'s "parent"); if
@@ -936,15 +949,23 @@ class _MergeWithPreviousNodeCommand extends EditCommand {
       return;
     }
 
-    if (node is TextNode && _listBlockTypes.contains(node.blockType)) {
-      // Backspace at the start of a list line removes the list format first
-      // (outdent if nested, else plain paragraph) — it only merges into the
-      // line above on the next press, as in Apple Notes.
-      node.metadata = node.indent > 0
-          ? {...node.metadata, 'indent': node.indent - 1}
-          : _metadataForBlockType(node, 'paragraph');
-      executor.emit(DocumentEdited([node.id]));
-      return;
+    if (node is TextNode) {
+      final isList = _listBlockTypes.contains(node.blockType);
+      // Backspace at the start peels one layer at a time, as in Apple Notes:
+      // an emptied list line loses its marker first (keeping its indent),
+      // then indent steps back, and only a flush plain line merges upward.
+      // A non-empty nested list line just outdents and keeps its marker.
+      if (isList || (node.indent > 0 && !_leavesContainer(document, node))) {
+        if (isList && node.text.text.isEmpty) {
+          node.metadata = _metadataForBlockType(node, 'paragraph');
+        } else if (node.indent > 0) {
+          node.metadata = {...node.metadata, 'indent': node.indent - 1};
+        } else {
+          node.metadata = _metadataForBlockType(node, 'paragraph');
+        }
+        executor.emit(DocumentEdited([node.id]));
+        return;
+      }
     }
 
     if (previous is TextNode && node is TextNode) {

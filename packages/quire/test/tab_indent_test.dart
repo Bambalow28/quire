@@ -104,4 +104,58 @@ void main() {
     expect(x('two'), greaterThan(x('nested')));
     expect(x('nested') - x('plain'), 24);
   });
+
+  group('Backspace peels one layer at a time', () {
+    test('an emptied nested bullet loses its marker, then its indent', () {
+      final c = _controller([
+        _n('a', 'one', {'blockType': 'listItemOrdered'}),
+        _n('b', '', {'blockType': 'listItemUnordered', 'indent': 1}),
+      ]);
+      _caret(c, 'b', 0);
+      c.backspaceAtCaret();
+      expect(_nodes(c)[1].blockType, 'paragraph');
+      expect(_nodes(c)[1].indent, 1);
+      c.backspaceAtCaret();
+      expect(_nodes(c)[1].indent, 0);
+      expect(_nodes(c).length, 2);
+      c.backspaceAtCaret();
+      expect(_nodes(c).length, 1);
+    });
+
+    test(
+      'backspace before the word of an indented line removes the indent',
+      () {
+        final c = _controller([
+          _n('a', 'one'),
+          _n('b', 'word', {'indent': 2}),
+        ]);
+        _caret(c, 'b', 0);
+        c.backspaceAtCaret();
+        expect(_nodes(c)[1].indent, 1);
+        expect(_nodes(c)[1].text.text, 'word');
+      },
+    );
+
+    test('a non-empty nested bullet outdents but stays a bullet', () {
+      final c = _controller([
+        _n('a', 'one', {'blockType': 'listItemUnordered'}),
+        _n('b', 'two', {'blockType': 'listItemUnordered', 'indent': 1}),
+      ]);
+      _caret(c, 'b', 0);
+      c.backspaceAtCaret();
+      expect(_nodes(c)[1].blockType, 'listItemUnordered');
+      expect(_nodes(c)[1].indent, 0);
+    });
+
+    test('backspace after a character still just deletes it', () {
+      final c = _controller([
+        _n('a', 'one'),
+        _n('b', 'word', {'indent': 1}),
+      ]);
+      _caret(c, 'b', 4);
+      c.backspaceAtCaret();
+      expect(_nodes(c)[1].text.text, 'wor');
+      expect(_nodes(c)[1].indent, 1);
+    });
+  });
 }

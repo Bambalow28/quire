@@ -1010,6 +1010,27 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     });
   }
 
+  /// Typing "2. " below a numbered item continues that list: the new item
+  /// takes the indent of the numbered line above it (looking past deeper
+  /// lines), so a line left indented after backspacing rejoins the list.
+  void _rejoinOrderedList(String nodeId, String prefix) {
+    final number = int.tryParse(prefix.replaceAll('.', ''));
+    if (number == null || number < 2) return;
+    final node = document.getNodeById(nodeId);
+    if (node is! TextNode) return;
+    for (var i = document.getNodeIndexById(nodeId) - 1; i >= 0; i--) {
+      final prev = document.getNodeAt(i);
+      if (prev is! TextNode) return;
+      if (prev.indent > node.indent) continue;
+      if (prev.blockType == 'listItemOrdered' && prev.indent < node.indent) {
+        history.execute([
+          SetNodeMetadataRequest(nodeId, 'indent', prev.indent),
+        ]);
+      }
+      return;
+    }
+  }
+
   /// Converts the paragraph at [nodeId] to
   /// the block type implied by a markdown prefix that's just been completed
   /// by a typed space — "- " -> bullet list, "1. " -> numbered list, "# " ->
@@ -1086,6 +1107,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
         history.execute([SetNodeMetadataRequest(nodeId, 'language', language)]);
       }
       if (checked) history.execute([ToggleTaskCheckedRequest(nodeId)]);
+      if (blockType == 'listItemOrdered') _rejoinOrderedList(nodeId, prefix);
       if (caret != null) {
         changeSelection(
           DocumentSelection(

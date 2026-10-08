@@ -834,6 +834,9 @@ class _QuireEditorState extends State<QuireEditor>
           _selectWordAt(nodeId, offset);
         }
       } else if (position != null &&
+          // A mouse click only moves the caret; the options come from a
+          // double-click or a drag-selection, as on any desktop editor.
+          _lastPointerKind != PointerDeviceKind.mouse &&
           (_caretAlreadyAt(
                 position.nodeId,
                 (position.nodePosition as TextNodePosition).offset,
@@ -860,6 +863,11 @@ class _QuireEditorState extends State<QuireEditor>
       }
     }
     _touchDownAt = null;
+    // Releasing a mouse drag that highlighted text offers Cut/Copy/etc.
+    if (moved && _lastPointerKind == PointerDeviceKind.mouse) {
+      final selection = widget.controller.composer.selection;
+      if (selection != null && !selection.isCollapsed) _showContextMenu();
+    }
     _endDrag();
   }
 

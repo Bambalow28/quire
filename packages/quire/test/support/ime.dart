@@ -31,13 +31,13 @@ final Finder findAllNodes = find.byWidgetPredicate(
 /// fast-forward, so two `tester.tapAt` calls back-to-back always look like a
 /// double-tap in a test even when the production gesture they're standing in
 /// for (tap an existing caret again, well after the fact) never would.
-/// Uses a different pointer kind (mouse, vs `tapAt`'s touch), which the
+/// Uses a different pointer kind (stylus, vs `tapAt`'s touch; a mouse click never opens the options), which the
 /// multi-click streak already treats as unrelated — lands on the exact same
 /// offset a same-position touch tap would, since layout is deterministic.
 Future<void> tapAgain(WidgetTester tester, Offset target) async {
   final gesture = await tester.startGesture(
     target,
-    kind: PointerDeviceKind.mouse,
+    kind: PointerDeviceKind.stylus,
   );
   await tester.pump();
   await gesture.up();
