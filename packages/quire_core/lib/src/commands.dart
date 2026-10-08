@@ -653,8 +653,12 @@ class ChangeBlockTypeRequest extends EditRequest {
 }
 
 class ChangeIndentRequest extends EditRequest {
-  ChangeIndentRequest(this.delta);
+  /// [nestLists] is the Tab-key behaviour: an indented numbered item that
+  /// follows another list item becomes a bullet under it, and a callout or
+  /// toggle takes its content along instead of leaving it behind.
+  ChangeIndentRequest(this.delta, {this.nestLists = false});
   final int delta;
+  final bool nestLists;
 }
 
 Iterable<TextNode> _textNodesInSelection(EditContext context) sync* {
@@ -726,9 +730,33 @@ class _ChangeIndentCommand extends EditCommand {
   @override
   void execute(EditContext context, CommandExecutor executor) {
     final changedIds = <String>[];
-    for (final node in _textNodesInSelection(context)) {
-      final newIndent = (node.indent + request.delta).clamp(0, 8);
-      node.metadata = {...node.metadata, 'indent': newIndent};
+    final document = context.document;
+    final selected = _textNodesInSelection(context).toList();
+    final selectedIds = {for (final n in selected) n.id};
+    for (final node in selected) {
+      final oldIndent = node.indent;
+      final newIndent = (oldIndent + request.delta).clamp(0, 8);
+      final metadata = {...node.metadata, 'indent': newIndent};
+      if (request.nestLists && request.delta > 0) {
+        final before = document.getNodeBefore(node.id);
+        if (node.blockType == 'listItemOrdered' &&
+            before is TextNode &&
+            before.blockType.startsWith('listItem')) {
+          metadata['blockType'] = 'listItemUnordered';
+        }
+        if (_containerBlockTypes.contains(node.blockType)) {
+          var next = document.getNodeAfter(node.id);
+          while (next != null && next.indent > oldIndent) {
+            if (!selectedIds.contains(next.id)) {
+              final shifted = (next.indent + request.delta).clamp(0, 8);
+              next.metadata = {...next.metadata, 'indent': shifted};
+              changedIds.add(next.id);
+            }
+            next = document.getNodeAfter(next.id);
+          }
+        }
+      }
+      node.metadata = metadata;
       changedIds.add(node.id);
     }
     if (changedIds.isNotEmpty) executor.emit(DocumentEdited(changedIds));

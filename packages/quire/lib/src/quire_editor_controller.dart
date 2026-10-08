@@ -391,6 +391,22 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     history.execute([ChangeIndentRequest(delta)]);
   }
 
+  /// Desktop Tab / Shift+Tab: indents (or outdents) every selected block.
+  /// Inside a code block with a caret it types two spaces instead.
+  void indentWithTab({bool outdent = false}) {
+    final selection = composer.selection;
+    if (selection == null) return;
+    final node = document.getNodeById(selection.extent.nodeId);
+    if (!outdent &&
+        selection.isCollapsed &&
+        node is TextNode &&
+        node.blockType == 'code') {
+      replaceSelectionWithText('  ');
+      return;
+    }
+    history.execute([ChangeIndentRequest(outdent ? -1 : 1, nestLists: true)]);
+  }
+
   /// Whether the focused node's alignment is already [align] — what makes an
   /// alignment button light up, mirroring [isBlockType].
   bool isTextAlign(String align) => focusedTextNode?.textAlign == align;

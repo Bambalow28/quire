@@ -1787,6 +1787,15 @@ class _QuireEditorState extends State<QuireEditor>
       bindings[const SingleActivator(LogicalKeyboardKey.numpadEnter)] =
           widget.controller.insertNewline;
     }
+    if (isDesktop) {
+      bindings[const SingleActivator(LogicalKeyboardKey.tab)] =
+          widget.controller.indentWithTab;
+      bindings[const SingleActivator(
+        LogicalKeyboardKey.tab,
+        shift: true,
+      )] = () =>
+          widget.controller.indentWithTab(outdent: true);
+    }
     final docSelection = widget.controller.composer.selection;
     if (isDesktop && docSelection != null && !docSelection.isCollapsed) {
       bindings[const SingleActivator(LogicalKeyboardKey.backspace)] =
