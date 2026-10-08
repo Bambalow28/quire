@@ -141,4 +141,109 @@ void main() {
         .toList();
     expect(order, ['foo', 'table', 'bar']);
   });
+
+  testWidgets('a Notion callout (<aside>) pastes as a callout with its list '
+      'nested inside, not as raw tags', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    stored = '<aside>\n💡\n\nMy title\n\n- one\n- two\n\n</aside>';
+
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    await controller.pasteClipboard();
+
+    final nodes = controller.document.nodesInDocumentOrder
+        .toList()
+        .cast<TextNode>();
+    expect(nodes.map((n) => n.text.text), ['My title', 'one', 'two']);
+    expect(nodes.map((n) => n.blockType), [
+      'callout',
+      'listItemUnordered',
+      'listItemUnordered',
+    ]);
+    expect(nodes.map((n) => n.indent), [0, 1, 1]);
+  });
+
+  testWidgets('a list pasted into a callout stays inside it', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'c',
+            text: AttributedText('Box'),
+            metadata: const {'blockType': 'callout'},
+          ),
+          TextNode(
+            id: 'a',
+            text: AttributedText(''),
+            metadata: const {'indent': 1},
+          ),
+        ],
+      ),
+    );
+    stored = '- one\n- two';
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    await controller.pasteClipboard();
+
+    final nodes = controller.document.nodesInDocumentOrder
+        .toList()
+        .cast<TextNode>();
+    expect(nodes.map((n) => n.indent), [0, 1, 1]);
+  });
+
+  testWidgets('a callout pasted after text leaves that text as its own line', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText('Hello '))],
+      ),
+    );
+    stored = '<aside>\nTitle\n\n- one\n\n</aside>';
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(6)),
+      ),
+    );
+    await controller.pasteClipboard();
+
+    final nodes = controller.document.nodesInDocumentOrder
+        .toList()
+        .cast<TextNode>();
+    expect(nodes.map((n) => n.text.text), ['Hello ', 'Title', 'one']);
+    expect(nodes.map((n) => n.blockType), [
+      'paragraph',
+      'callout',
+      'listItemUnordered',
+    ]);
+  });
+
+  testWidgets('a prose line starting with ">" and no space stays literal', (
+    tester,
+  ) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(
+        nodes: [TextNode(id: 'a', text: AttributedText(''))],
+      ),
+    );
+    stored = '>5 items';
+    controller.changeSelection(
+      DocumentSelection.collapsed(
+        DocumentPosition('a', const TextNodePosition(0)),
+      ),
+    );
+    await controller.pasteClipboard();
+    final node = controller.document.nodesInDocumentOrder.first as TextNode;
+    expect(node.blockType, 'paragraph');
+  });
 }

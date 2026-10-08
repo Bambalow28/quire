@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'attributed_text.dart';
 import 'document.dart';
@@ -112,17 +113,38 @@ class _InsertRichContentCommand extends EditCommand {
         DocumentPosition(node.id, TextNodePosition(merged.text.length)),
       );
     } else {
-      node.text = _concatText(left, nodes.first.text);
-      // The prefix now shares a line with the first pasted node — its
-      // block type wins for that line, the way the rest of the pasted
-      // nodes carry their own.
-      node.metadata = Map<String, Object?>.from(nodes.first.metadata);
+      // Pasted blocks land at the target's nesting level (a list pasted
+      // into a callout stays in it), keeping their depth relative to each
+      // other.
+      final floor = nodes.map((n) => n.indent).reduce(math.min);
+      Map<String, Object?> placed(TextNode n) {
+        final meta = Map<String, Object?>.from(n.metadata);
+        final depth = node.indent + n.indent - floor;
+        if (depth > 0) {
+          meta['indent'] = depth;
+        } else {
+          meta.remove('indent');
+        }
+        return meta;
+      }
+
+      // A callout or toggle owns the blocks after it, so it can't share a
+      // line with text before the caret ("Hello" must not become its title).
+      final separate =
+          left.text.isNotEmpty &&
+          _containerBlockTypes.contains(nodes.first.blockType);
+      if (separate) {
+        node.text = left;
+      } else {
+        node.text = _concatText(left, nodes.first.text);
+        node.metadata = placed(nodes.first);
+      }
       var previousId = node.id;
-      for (var i = 1; i < nodes.length - 1; i++) {
+      for (var i = separate ? 0 : 1; i < nodes.length - 1; i++) {
         final middle = TextNode(
           id: generateNodeId(),
           text: nodes[i].text,
-          metadata: Map<String, Object?>.from(nodes[i].metadata),
+          metadata: placed(nodes[i]),
         );
         document.insertNodeAfter(previousId, middle);
         changedIds.add(middle.id);
@@ -132,7 +154,7 @@ class _InsertRichContentCommand extends EditCommand {
       final lastNode = TextNode(
         id: generateNodeId(),
         text: _concatText(last.text, right),
-        metadata: Map<String, Object?>.from(last.metadata),
+        metadata: placed(last),
       );
       document.insertNodeAfter(previousId, lastNode);
       changedIds.add(lastNode.id);

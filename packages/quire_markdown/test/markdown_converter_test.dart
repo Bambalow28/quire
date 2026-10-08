@@ -459,4 +459,74 @@ void tableTests() {
       expect(quireToMarkdown(doc), 'see [Groceries](quire-note:n1) now');
     });
   });
+
+  group('Notion containers', () {
+    test('<aside> becomes a callout with indented content', () {
+      final doc = markdownToQuire(
+        '<aside>\n💡\n\nTitle\n\n- a\n  - b\n\n</aside>\nafter',
+      );
+      final n = doc.nodes.cast<TextNode>().toList();
+      expect(n.map((x) => x.text.text), ['Title', 'a', 'b', 'after']);
+      expect(n.map((x) => x.blockType), [
+        'callout',
+        'listItemUnordered',
+        'listItemUnordered',
+        'paragraph',
+      ]);
+      expect(n.map((x) => x.indent), [0, 1, 2, 0]);
+    });
+
+    test('<details><summary> becomes a toggle', () {
+      final doc = markdownToQuire(
+        '<details>\n<summary>Hi</summary>\n\nbody\n\n</details>',
+      );
+      final n = doc.nodes.cast<TextNode>().toList();
+      expect(n.map((x) => x.text.text), ['Hi', 'body']);
+      expect(n.first.blockType, 'toggleList');
+      expect(n.last.indent, 1);
+    });
+
+    test('callout round-trips through markdown', () {
+      final src = '<aside>\n💡\n\nTitle\n\n- a\n\n</aside>';
+      final out = quireToMarkdown(markdownToQuire(src));
+      final again = markdownToQuire(out).nodes.cast<TextNode>().toList();
+      expect(again.map((x) => x.text.text), ['Title', 'a']);
+      expect(again.first.blockType, 'callout');
+      expect(again.last.indent, 1);
+    });
+
+    test('a callout with no title keeps its content through a round trip', () {
+      final doc = MutableDocument(
+        nodes: [
+          TextNode(
+            id: 'c',
+            text: AttributedText(''),
+            metadata: const {'blockType': 'callout'},
+          ),
+          TextNode(
+            id: 'p',
+            text: AttributedText('body'),
+            metadata: const {'indent': 1},
+          ),
+        ],
+      );
+      final again = markdownToQuire(
+        quireToMarkdown(doc),
+      ).nodes.cast<TextNode>().toList();
+      expect(again.map((x) => x.text.text), ['', 'body']);
+      expect(again.map((x) => x.indent), [0, 1]);
+    });
+
+    test('a callout inside a callout nests', () {
+      final n = markdownToQuire(
+        '<aside>\nOuter\n\n<aside>\nInner\n\n- x\n\n</aside>\n\n</aside>\nafter',
+      ).nodes.cast<TextNode>().toList();
+      expect(n.map((x) => x.text.text), ['Outer', 'Inner', 'x', 'after']);
+      expect(n.map((x) => x.indent), [0, 1, 2, 0]);
+      final back = markdownToQuire(
+        quireToMarkdown(MutableDocument(nodes: n)),
+      ).nodes.cast<TextNode>().toList();
+      expect(back.map((x) => x.indent), [0, 1, 2, 0]);
+    });
+  });
 }

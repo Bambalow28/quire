@@ -176,6 +176,10 @@ TextStyle _applyAttribution(
         TextStyle(
           fontFamily: kCodeFontFamily,
           fontFamilyFallback: kCodeFontFallback,
+          // Notion's inline code: a warm red on a faint grey chip.
+          color: Theme.of(context).brightness == Brightness.dark
+              ? const Color(0xFFFF8A80)
+              : const Color(0xFFEB5757),
           backgroundColor: Theme.of(
             context,
           ).colorScheme.surfaceContainerHighest,

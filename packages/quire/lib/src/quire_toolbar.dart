@@ -259,6 +259,14 @@ class _QuireToolbarState extends State<QuireToolbar>
                         isSelected: active.contains(_underlineAttribution),
                         onPressed: widget.controller.toggleUnderline,
                       ),
+                      // A narrow phone has no room; the + panel carries it.
+                      if (MediaQuery.sizeOf(context).width >= 420)
+                        _BarButton(
+                          tooltip: 'Code',
+                          icon: Icons.code,
+                          isSelected: active.contains(_codeAttribution),
+                          onPressed: widget.controller.toggleCode,
+                        ),
                       _BarButton(
                         tooltip: 'Link',
                         icon: Icons.link,

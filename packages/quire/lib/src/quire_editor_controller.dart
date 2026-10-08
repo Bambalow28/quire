@@ -1451,7 +1451,7 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
   /// [markdownToQuire]'s own parsing — this only decides which paste path
   /// to take, not how to parse it.
   static final _mdBlockLine = RegExp(
-    r'^ {0,3}(#{1,6}\s|[-*]\s|\d+\.\s|\[[ xX]\]\s|>|`{3}|\|.*\|\s*$)',
+    r'^ {0,3}(#{1,6}\s|[-*]\s|\d+\.\s|\[[ xX]\]\s|>\s|`{3}|<aside>|<details>|\|.*\|\s*$)',
     multiLine: true,
   );
   static final _mdInlineMarkup = RegExp(

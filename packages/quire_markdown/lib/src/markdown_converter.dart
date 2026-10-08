@@ -61,6 +61,25 @@ MutableDocument markdownToQuire(String markdown) {
       continue;
     }
 
+    final container = _containerOpen(line);
+    if (container != null) {
+      final inner = <String>[];
+      i++;
+      var depth = 1;
+      while (i < lines.length) {
+        if (_containerOpen(lines[i]) != null) {
+          depth++;
+        } else if (_anyClose.hasMatch(lines[i]) && --depth == 0) {
+          break;
+        }
+        inner.add(lines[i]);
+        i++;
+      }
+      i++; // consume the closing tag (or run off the end if unterminated)
+      nodes.addAll(_containerNodes(container, inner));
+      continue;
+    }
+
     if (_hrRegex.hasMatch(line)) {
       nodes.add(HorizontalRuleNode(id: generateNodeId()));
       i++;
@@ -146,6 +165,93 @@ MutableDocument markdownToQuire(String markdown) {
   return MutableDocument(nodes: nodes);
 }
 
+// Notion copies a callout as `<aside>…</aside>` and a toggle as
+// `<details><summary>…</summary>…</details>`. Both map onto a title node plus
+// content indented one level deeper.
+class _Container {
+  _Container(this.blockType, this.close, [this.summary]);
+  final String blockType;
+  final RegExp close;
+  final String? summary;
+}
+
+final _asideOpen = RegExp(r'^\s*<aside>\s*$');
+final _detailsOpen = RegExp(
+  r'^\s*<details>\s*(?:<summary>(.*?)</summary>)?\s*$',
+);
+final _anyClose = RegExp(r'^\s*</(?:aside|details)>\s*$');
+final _summaryLine = RegExp(r'^\s*<summary>(.*?)</summary>\s*$');
+
+_Container? _containerOpen(String line) {
+  if (_asideOpen.hasMatch(line)) {
+    return _Container('callout', RegExp(r'^\s*</aside>\s*$'));
+  }
+  final details = _detailsOpen.firstMatch(line);
+  if (details != null) {
+    return _Container(
+      'toggleList',
+      RegExp(r'^\s*</details>\s*$'),
+      details.group(1),
+    );
+  }
+  return null;
+}
+
+/// Stands in for an empty callout title so the content below isn't mistaken
+/// for it on re-import.
+const _emptyTitle = '\u200b';
+
+/// No letters or digits — the lone icon line Notion puts above a callout.
+bool _isIconOnly(String text) =>
+    text != _emptyTitle &&
+    !RegExp(r'[\p{L}\p{N}]', unicode: true).hasMatch(text);
+
+List<DocumentNode> _containerNodes(_Container c, List<String> inner) {
+  var summary = c.summary;
+  if (summary == null && c.blockType == 'toggleList') {
+    final at = inner.indexWhere((l) => l.trim().isNotEmpty);
+    final m = at < 0 ? null : _summaryLine.firstMatch(inner[at]);
+    if (m != null) {
+      summary = m.group(1);
+      inner.removeAt(at);
+    }
+  }
+  final body = markdownToQuire(inner.join('\n')).nodes.toList();
+  // markdownToQuire pads an empty document with one empty paragraph.
+  if (body.length == 1 && body.first is TextNode) {
+    if ((body.first as TextNode).text.text.isEmpty) body.clear();
+  }
+  TextNode title;
+  if (summary != null) {
+    title = _textNode(summary, const {'blockType': 'toggleList'});
+  } else {
+    // A callout's icon sits on its own line; the title is the line after it.
+    if (body.length > 1 &&
+        body.first is TextNode &&
+        _isIconOnly((body.first as TextNode).text.text)) {
+      body.removeAt(0);
+    }
+    // Only a text line can be the title — a list item first means the title
+    // is empty (our own export marks that with a lone ZWSP line).
+    var first =
+        body.isNotEmpty &&
+            body.first is TextNode &&
+            !(body.first as TextNode).blockType.startsWith('listItem')
+        ? body.removeAt(0) as TextNode
+        : null;
+    if (first != null && first.text.text == _emptyTitle) first = null;
+    title = TextNode(
+      id: generateNodeId(),
+      text: first?.text ?? AttributedText(''),
+      metadata: {'blockType': c.blockType},
+    );
+  }
+  for (final n in body) {
+    n.metadata['indent'] = n.indent + 1;
+  }
+  return [title, ...body];
+}
+
 /// Same as [markdownToQuire] but returns `null` instead of throwing.
 MutableDocument? markdownToQuireOrNull(String markdown) {
   try {
@@ -161,19 +267,50 @@ MutableDocument? markdownToQuireOrNull(String markdown) {
 /// table, see the file-level comment) are rendered; anything else is skipped,
 /// never thrown on.
 String quireToMarkdown(MutableDocument doc) {
+  return _renderNodes(doc.nodes.toList(), 0).join('\n');
+}
+
+/// Renders [nodes]; [base] is the indent that counts as the left margin, so a
+/// container's content (one level deeper) comes out as top-level markdown.
+List<String> _renderNodes(List<DocumentNode> nodes, int base) {
   final lines = <String>[];
-  for (final node in doc.nodes) {
+  for (var i = 0; i < nodes.length; i++) {
+    final node = nodes[i];
     if (node is HorizontalRuleNode) {
       lines.add('---');
     } else if (node is ImageNode) {
       lines.add('![${node.altText ?? ''}](${node.url})');
     } else if (node is TextNode) {
-      lines.add(_lineFor(node));
+      final type = node.blockType;
+      if (type != 'callout' && type != 'toggleList') {
+        lines.add(_lineFor(node, base));
+        continue;
+      }
+      var end = i + 1;
+      while (end < nodes.length && nodes[end].indent > node.indent) {
+        end++;
+      }
+      final inner = _renderNodes(nodes.sublist(i + 1, end), node.indent + 1);
+      final rendered = _renderInline(node.text);
+      final title = rendered.isEmpty && inner.isNotEmpty
+          ? _emptyTitle
+          : rendered;
+      if (type == 'callout') {
+        lines.addAll(['<aside>', title, '', ...inner, '</aside>']);
+      } else {
+        lines.addAll([
+          '<details><summary>$title</summary>',
+          '',
+          ...inner,
+          '</details>',
+        ]);
+      }
+      i = end - 1;
     } else if (node is TableNode) {
       lines.addAll(_tableLines(node));
     }
   }
-  return lines.join('\n');
+  return lines;
 }
 
 TextNode _textNode(String content, Map<String, Object?> metadata) {
@@ -195,8 +332,8 @@ TextNode _textNode(String content, Map<String, Object?> metadata) {
   );
 }
 
-String _lineFor(TextNode node) {
-  final prefix = _prefixFor(node);
+String _lineFor(TextNode node, int base) {
+  final prefix = _prefixFor(node, base);
   // Fenced code blocks are rendered verbatim (no inline markup inside code).
   if (node.blockType == 'code') {
     final language = node.metadata['language'] as String? ?? '';
@@ -205,8 +342,8 @@ String _lineFor(TextNode node) {
   return '$prefix${_renderInline(node.text)}';
 }
 
-String _prefixFor(TextNode node) {
-  final indent = '  ' * node.indent;
+String _prefixFor(TextNode node, int base) {
+  final indent = '  ' * (node.indent - base);
   switch (node.blockType) {
     case 'header1':
       return '# ';
