@@ -2783,10 +2783,32 @@ class _QuireEditorState extends State<QuireEditor>
       _ => null,
     };
     if (label == null) return null;
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: Text(label, style: _styleFor(Theme.of(context), node)),
-    );
+    final text = Text(label, style: _styleFor(Theme.of(context), node));
+    // A bullet tabbed in under a numbered item gets a number-wide gutter, so
+    // it reads as clearly nested. Bullets anywhere else are untouched.
+    if (node.blockType == 'listItemUnordered' &&
+        _parentListItem(node)?.blockType == 'listItemOrdered') {
+      return Container(
+        constraints: const BoxConstraints(minWidth: 24),
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 6),
+        child: text,
+      );
+    }
+    return Padding(padding: const EdgeInsets.only(right: 6), child: text);
+  }
+
+  /// The list item [node] is nested under: the nearest earlier text node
+  /// that sits shallower than it.
+  TextNode? _parentListItem(TextNode node) {
+    if (node.indent == 0) return null;
+    final document = widget.controller.document;
+    for (var i = document.getNodeIndexById(node.id) - 1; i >= 0; i--) {
+      final prev = document.getNodeAt(i);
+      if (prev is! TextNode) return null;
+      if (prev.indent < node.indent) return prev;
+    }
+    return null;
   }
 
   int _orderedListNumber(MutableDocument document, String nodeId) {

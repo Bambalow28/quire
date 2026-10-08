@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:quire/quire.dart';
 
@@ -80,5 +81,27 @@ void main() {
     c.indentWithTab();
     expect(_nodes(c)[0].text.text, 'x  ');
     expect(_nodes(c)[0].indent, 0);
+  });
+
+  testWidgets('a bullet under a number is pushed in; a plain bullet is not', (
+    tester,
+  ) async {
+    final c = _controller([
+      _n('a', 'one', {'blockType': 'listItemOrdered'}),
+      _n('b', 'two', {'blockType': 'listItemUnordered', 'indent': 1}),
+      _n('c', 'plain', {'blockType': 'listItemUnordered'}),
+      _n('d', 'nested', {'blockType': 'listItemUnordered', 'indent': 1}),
+    ]);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: QuireEditor(controller: c)),
+      ),
+    );
+    double x(String t) =>
+        tester.getTopLeft(find.text(t, findRichText: true)).dx;
+    // Same 24px of indent each, but only the one under a number gets the
+    // wider gutter.
+    expect(x('two'), greaterThan(x('nested')));
+    expect(x('nested') - x('plain'), 24);
   });
 }
