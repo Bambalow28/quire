@@ -249,6 +249,18 @@ class _DeleteSelectionCommand extends EditCommand {
     context.composer.selection = landing == null
         ? null
         : DocumentSelection.collapsed(landing);
+    // The caret now sits next to whatever survived: typing on continues its
+    // style (deleting back to the end of a bold word keeps it bold).
+    final landed = landing == null
+        ? null
+        : document.getNodeById(landing.nodeId);
+    if (landed is TextNode && landing!.nodePosition is TextNodePosition) {
+      context.composer.composingAttributions = _typingAttributionsAt(
+        landed.text,
+        (landing.nodePosition as TextNodePosition).offset,
+      );
+      executor.emit(ComposingAttributionsChanged());
+    }
     executor.emit(DocumentEdited(changedIds.toList()));
     executor.emit(SelectionChanged());
   }

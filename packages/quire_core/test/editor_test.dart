@@ -559,9 +559,7 @@ void main() {
     final editor = _editor(doc, composer);
     void caretAt(int o) => editor.execute([
       ChangeSelectionRequest(
-        DocumentSelection.collapsed(
-          DocumentPosition('a', TextNodePosition(o)),
-        ),
+        DocumentSelection.collapsed(DocumentPosition('a', TextNodePosition(o))),
       ),
     ]);
 
