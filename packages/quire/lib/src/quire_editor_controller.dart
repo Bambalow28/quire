@@ -897,14 +897,31 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     // letter stays lowercase, which force-uppercasing the insert here made
     // impossible.
     final textToInsert = insertedText;
+    // A second space in a row drops the style: it goes in plain, and typing
+    // on continues plain (the way out of a bold run without the toolbar).
+    final doubleSpace =
+        start == end &&
+        insertedText == ' ' &&
+        start > 0 &&
+        node is TextNode &&
+        node.text.text[start - 1] == ' ';
     if (textToInsert.isNotEmpty) {
       requests.add(
         InsertTextRequest(
           DocumentPosition(nodeId, TextNodePosition(start)),
           textToInsert,
-          attributions,
+          doubleSpace ? <Attribution>{} : attributions,
         ),
       );
+      if (doubleSpace) {
+        requests.add(
+          ChangeSelectionRequest(
+            DocumentSelection.collapsed(
+              DocumentPosition(nodeId, TextNodePosition(start + 1)),
+            ),
+          ),
+        );
+      }
     }
     if (requests.isNotEmpty) history.execute(requests);
 

@@ -471,6 +471,10 @@ class _InsertNewlineCommand extends EditCommand {
       context.composer.selection = DocumentSelection.collapsed(
         DocumentPosition(newNode.id, const TextNodePosition(0)),
       );
+      // A new line starts plain: bold/italic/etc. armed on the old line
+      // don't carry over (a split-off tail keeps its own formatting).
+      context.composer.composingAttributions = _typingAttributionsAt(right, 0);
+      executor.emit(ComposingAttributionsChanged());
       executor.emit(DocumentEdited([node.id, newNode.id]));
     } else {
       final isUpstream =
