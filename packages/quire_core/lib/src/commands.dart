@@ -501,7 +501,7 @@ class _ChangeSelectionCommand extends EditCommand {
       final node = context.document.getNodeById(selection.extent.nodeId);
       final position = selection.extent.nodePosition;
       if (node is TextNode && position is TextNodePosition) {
-        newComposing = node.text.attributionsAt(position.offset);
+        newComposing = _typingAttributionsAt(node.text, position.offset);
       }
     }
     if (!_setEquals(context.composer.composingAttributions, newComposing)) {
@@ -509,6 +509,21 @@ class _ChangeSelectionCommand extends EditCommand {
       executor.emit(ComposingAttributionsChanged());
     }
   }
+}
+
+/// The formatting a character typed at [offset] should inherit: the
+/// character *before* the caret (so typing at the end of a bold run stays
+/// bold), or the one after it at the very start of a node. Links and inline
+/// code never extend by typing at their edge (a markdown `code` shortcut
+/// relies on typing on afterwards leaving the code style).
+Set<Attribution> _typingAttributionsAt(AttributedText text, int offset) {
+  if (offset <= 0) return text.attributionsAt(0);
+  return text
+      .attributionsAt(offset - 1)
+      .where(
+        (a) => a.name != 'link' && a.name != 'noteLink' && a.name != 'code',
+      )
+      .toSet();
 }
 
 bool _setEquals(Set<Attribution> a, Set<Attribution> b) =>

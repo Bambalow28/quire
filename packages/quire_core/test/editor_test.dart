@@ -541,6 +541,36 @@ void main() {
     },
   );
 
+  test('caret at the end of a styled run keeps typing in that style', () {
+    const bold = Attribution('bold');
+    const link = Attribution('link');
+    final doc = MutableDocument(
+      nodes: [
+        TextNode(
+          id: 'a',
+          text: AttributedText('bold link', [
+            AttributionSpan(bold, 0, 4),
+            AttributionSpan(link, 5, 9),
+          ]),
+        ),
+      ],
+    );
+    final composer = DocumentComposer();
+    final editor = _editor(doc, composer);
+    void caretAt(int o) => editor.execute([
+      ChangeSelectionRequest(
+        DocumentSelection.collapsed(
+          DocumentPosition('a', TextNodePosition(o)),
+        ),
+      ),
+    ]);
+
+    caretAt(4); // right after "bold"
+    expect(composer.composingAttributions, {bold});
+    caretAt(9); // right after the link: links never extend
+    expect(composer.composingAttributions, isEmpty);
+  });
+
   test(
     'InsertTextRequest with null attributions uses composingAttributions',
     () {
