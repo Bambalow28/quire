@@ -280,9 +280,22 @@ class RenderTableGrid extends RenderBox
         final data = entry.data;
         final endRow = (data.row + data.rowSpan).clamp(0, rowCount);
         entry.child.layout(
-          BoxConstraints.tightFor(
-            width: _columnSpanWidth(columnOffsets, data.column, data.colSpan),
-            height: rowOffsets[endRow] - rowOffsets[data.row],
+          // Tight width, but only a *minimum* height. A tight height makes
+          // the cell a relayout boundary, so typing or pasting a new line in
+          // it would never reach the table and the text would overflow the
+          // cell instead of the row growing.
+          BoxConstraints(
+            minWidth: _columnSpanWidth(
+              columnOffsets,
+              data.column,
+              data.colSpan,
+            ),
+            maxWidth: _columnSpanWidth(
+              columnOffsets,
+              data.column,
+              data.colSpan,
+            ),
+            minHeight: rowOffsets[endRow] - rowOffsets[data.row],
           ),
           parentUsesSize: true,
         );

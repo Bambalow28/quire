@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:quire_core/quire_core.dart';
 
 import 'syntax_highlight.dart';
@@ -19,6 +20,11 @@ const _emptyNodeRenderPlaceholder = '​';
 /// platforms fall through to theirs.
 const kCodeFontFamily = 'Menlo';
 const kCodeFontFallback = ['Courier New', 'monospace'];
+
+/// Inline code: green on dark grey, in both themes, so it reads as code and
+/// keeps its contrast on a light page too.
+const kInlineCodeColor = Color(0xFF7EE787);
+const kInlineCodeChip = Color(0xFF2B2D31);
 
 TextStyle syntaxStyle(SyntaxToken token, Brightness brightness) {
   final dark = brightness == Brightness.dark;
@@ -110,6 +116,11 @@ TextSpan buildAttributedTextSpan({
         ? syntax[syntaxIndex].token
         : null;
     var runStyle = _mergeAttributionStyles(covering, context);
+    if (covering.any((a) => a.name == 'code')) {
+      runStyle = runStyle.copyWith(
+        fontSize: (runStyle.fontSize ?? style.fontSize ?? 16) * 0.88,
+      );
+    }
     if (token != null) {
       runStyle = syntaxStyle(token, brightness).merge(runStyle);
     }
@@ -172,17 +183,15 @@ TextStyle _applyAttribution(
     case 'strikethrough':
       return _addDecoration(style, TextDecoration.lineThrough);
     case 'code':
+      // Colour and face only: the rounded chip behind it is painted by
+      // [InlineCodeChips] (a TextStyle background cannot round its corners),
+      // and the smaller size is applied in [buildAttributedTextSpan], which
+      // knows the surrounding font size.
       return style.merge(
-        TextStyle(
+        const TextStyle(
           fontFamily: kCodeFontFamily,
           fontFamilyFallback: kCodeFontFallback,
-          // Notion's inline code: a warm red on a faint grey chip.
-          color: Theme.of(context).brightness == Brightness.dark
-              ? const Color(0xFFFF8A80)
-              : const Color(0xFFEB5757),
-          backgroundColor: Theme.of(
-            context,
-          ).colorScheme.surfaceContainerHighest,
+          color: kInlineCodeColor,
         ),
       );
     case 'link':
@@ -261,4 +270,37 @@ Color? _parseColor(Object? hex) {
     return parsed == null ? null : Color(parsed);
   }
   return null;
+}
+
+/// Paints a rounded dark chip behind each inline-code range of [paragraphKey]'s
+/// paragraph. Sits behind the text (a `CustomPaint` painter), reading the
+/// laid-out boxes at paint time, so wrapping and selection never disturb it.
+class InlineCodeChips extends CustomPainter {
+  InlineCodeChips(this.paragraphKey, this.ranges);
+
+  final GlobalKey paragraphKey;
+  final List<TextRange> ranges;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paragraph = paragraphKey.currentContext?.findRenderObject();
+    if (paragraph is! RenderParagraph || !paragraph.hasSize) return;
+    final paint = Paint()..color = kInlineCodeChip;
+    for (final r in ranges) {
+      for (final box in paragraph.getBoxesForSelection(
+        TextSelection(baseOffset: r.start, extentOffset: r.end),
+      )) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            box.toRect().inflate(1.5),
+            const Radius.circular(5),
+          ),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(InlineCodeChips old) => true;
 }

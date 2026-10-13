@@ -327,4 +327,24 @@ void main() {
       expect(selection == null || selection.isCollapsed, isTrue);
     },
   );
+
+  testWidgets('a cell grows its row when its text gets longer', (tester) async {
+    final controller = QuireEditorController(
+      document: MutableDocument(nodes: [_grid('t', 2, 2)]),
+    );
+    await _pumpEditor(tester, controller);
+    final tableBox = find.byType(TableGrid);
+    final before = tester.getSize(tableBox).height;
+
+    await tester.tap(findNode('t_r0c0'));
+    await tester.pumpAndSettle();
+    await replaceEntireText(tester, List.filled(40, 'word').join(' '));
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(tableBox).height, greaterThan(before));
+    expect(
+      tester.getBottomLeft(findNode('t_r0c0')).dy,
+      lessThanOrEqualTo(tester.getBottomLeft(tableBox).dy),
+    );
+  });
 }

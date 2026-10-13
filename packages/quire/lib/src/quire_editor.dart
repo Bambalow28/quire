@@ -2290,10 +2290,7 @@ class _QuireEditorState extends State<QuireEditor>
                   columnCount * TableGrid.defaultMinColumnWidth;
               if (constraints.hasBoundedWidth &&
                   naturalWidth > constraints.maxWidth) {
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: tableGrid,
-                );
+                return _ScrollableTable(child: tableGrid);
               }
               return tableGrid;
             },
@@ -2392,18 +2389,27 @@ class _QuireEditorState extends State<QuireEditor>
           value: node.text.text,
           focused: isFocused,
           onTap: () => _placeCaret(node.id, node.text.text.length),
-          child: RichText(
-            key: paragraphKey,
-            textAlign: _textAlignFor(node),
-            textScaler: MediaQuery.textScalerOf(context),
-            text: buildAttributedTextSpan(
-              text: node.text,
-              style: style,
-              context: context,
-              composingRange: composingRange,
-              codeLanguage: node.blockType == 'code'
-                  ? node.metadata['language'] as String?
-                  : null,
+          child: CustomPaint(
+            painter: node.blockType == 'code'
+                ? null
+                : InlineCodeChips(paragraphKey, [
+                    for (final s in node.text.spans)
+                      if (s.attribution.name == 'code')
+                        TextRange(start: s.start, end: s.end),
+                  ]),
+            child: RichText(
+              key: paragraphKey,
+              textAlign: _textAlignFor(node),
+              textScaler: MediaQuery.textScalerOf(context),
+              text: buildAttributedTextSpan(
+                text: node.text,
+                style: style,
+                context: context,
+                composingRange: composingRange,
+                codeLanguage: node.blockType == 'code'
+                    ? node.metadata['language'] as String?
+                    : null,
+              ),
             ),
           ),
         ),
@@ -2919,6 +2925,49 @@ class _CodeBlockHeaderState extends State<_CodeBlockHeader> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A wide table's horizontal scroller. The scrollbar shows on desktop (where
+/// there is no touch to hint that the table continues); on touch it appears
+/// only while scrolling, as usual.
+class _ScrollableTable extends StatefulWidget {
+  const _ScrollableTable({required this.child});
+  final Widget child;
+
+  @override
+  State<_ScrollableTable> createState() => _ScrollableTableState();
+}
+
+class _ScrollableTableState extends State<_ScrollableTable> {
+  final _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final desktop = switch (Theme.of(context).platform) {
+      TargetPlatform.macOS ||
+      TargetPlatform.windows ||
+      TargetPlatform.linux => true,
+      _ => false,
+    };
+    return Scrollbar(
+      controller: _controller,
+      thumbVisibility: desktop,
+      child: SingleChildScrollView(
+        controller: _controller,
+        scrollDirection: Axis.horizontal,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: desktop ? 10 : 0),
+          child: widget.child,
+        ),
+      ),
     );
   }
 }
