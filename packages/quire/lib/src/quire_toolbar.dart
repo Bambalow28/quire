@@ -21,7 +21,6 @@ bool get _hasSoftwareKeyboard =>
 const _boldAttribution = Attribution('bold');
 const _italicAttribution = Attribution('italic');
 const _underlineAttribution = Attribution('underline');
-const _codeAttribution = Attribution('code');
 
 /// Alignments the toolbar offers, in the order the icon row shows them.
 const _alignments = <(String, IconData, String)>[
@@ -264,8 +263,9 @@ class _QuireToolbarState extends State<QuireToolbar>
                         _BarButton(
                           tooltip: 'Code',
                           icon: Icons.code,
-                          isSelected: active.contains(_codeAttribution),
-                          onPressed: widget.controller.toggleCode,
+                          isSelected: widget.controller.isBlockType('code'),
+                          onPressed: () =>
+                              widget.controller.setBlockType('code'),
                         ),
                       _BarButton(
                         tooltip: 'Link',
@@ -544,12 +544,10 @@ class _OptionsPanel extends StatelessWidget {
               onPick: controller.setHighlight,
             ),
             _OptionRow(
-              label: 'Inline code',
+              label: 'Code',
               icon: Icons.code,
-              selected: controller.activeAttributions.contains(
-                _codeAttribution,
-              ),
-              onTap: controller.toggleCode,
+              selected: controller.isBlockType('code'),
+              onTap: () => controller.setBlockType('code'),
             ),
             if (controller.noteLinks != null)
               _OptionRow(

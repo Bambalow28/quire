@@ -2466,6 +2466,7 @@ class _QuireEditorState extends State<QuireEditor>
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
           decoration: BoxDecoration(
             color: kInlineCodeChip,
+            border: Border.all(color: const Color(0xFF4A4D52)),
             borderRadius: BorderRadius.circular(10),
           ),
           child: Column(
@@ -2698,6 +2699,7 @@ class _QuireEditorState extends State<QuireEditor>
           fontFamily: kCodeFontFamily,
           fontFamilyFallback: kCodeFontFallback,
           color: kInlineCodeColor,
+          fontSize: (base.fontSize ?? 16) * 0.88,
         );
       default:
         return base;

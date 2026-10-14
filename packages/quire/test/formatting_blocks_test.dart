@@ -522,7 +522,7 @@ void main() {
       await tester.tap(find.byTooltip('More options'));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(
-        find.text('Inline code'),
+        find.text('Code'),
         100,
         scrollable: find
             .descendant(
@@ -548,7 +548,7 @@ void main() {
       tester,
     ) async {
       await openPanelAtInlineCode(tester, _controller([_p('a')]));
-      expect(find.text('Inline code'), findsOneWidget);
+      expect(find.text('Code'), findsOneWidget);
       expect(find.text('Link to note'), findsNothing);
     });
   });
