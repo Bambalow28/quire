@@ -2211,8 +2211,8 @@ class _QuireEditorState extends State<QuireEditor>
     if (node is HorizontalRuleNode) {
       return const ExcludeSemantics(
         child: Padding(
-          padding: EdgeInsets.symmetric(vertical: 8),
-          child: Divider(),
+          padding: EdgeInsets.symmetric(vertical: 10),
+          child: _FaintDivider(),
         ),
       );
     }
@@ -2295,8 +2295,8 @@ class _QuireEditorState extends State<QuireEditor>
               return tableGrid;
             },
           ),
-          Transform.translate(
-            offset: const Offset(-14, -12),
+          Align(
+            alignment: Alignment.centerLeft,
             child: TableSettingsMenu(
               controller: widget.controller,
               tableId: node.id,
@@ -2463,10 +2463,10 @@ class _QuireEditorState extends State<QuireEditor>
       case 'code':
         return Container(
           margin: EdgeInsets.only(left: indentPadding, bottom: 4),
-          padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(4),
+            color: kInlineCodeChip,
+            borderRadius: BorderRadius.circular(10),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2697,6 +2697,7 @@ class _QuireEditorState extends State<QuireEditor>
         return base.copyWith(
           fontFamily: kCodeFontFamily,
           fontFamilyFallback: kCodeFontFallback,
+          color: kInlineCodeColor,
         );
       default:
         return base;
@@ -2845,6 +2846,17 @@ class _QuireEditorState extends State<QuireEditor>
   }
 }
 
+/// A hairline rule, like Notion's: one pixel, barely there.
+class _FaintDivider extends StatelessWidget {
+  const _FaintDivider();
+
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 1,
+    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.12),
+  );
+}
+
 /// The strip above a code block: the language (tap to change it) and a copy
 /// button that confirms with a tick.
 class _CodeBlockHeader extends StatefulWidget {
@@ -2885,7 +2897,8 @@ class _CodeBlockHeaderState extends State<_CodeBlockHeader> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final muted = theme.hintColor;
+    // The block is dark in both themes, so the strip can't use theme greys.
+    const muted = Colors.white54;
     final label = theme.textTheme.labelMedium?.copyWith(color: muted);
     return Row(
       children: [
@@ -2919,7 +2932,7 @@ class _CodeBlockHeaderState extends State<_CodeBlockHeader> {
               child: Icon(
                 _copied ? Icons.check : Icons.content_copy,
                 size: 16,
-                color: _copied ? theme.colorScheme.primary : muted,
+                color: _copied ? kInlineCodeColor : muted,
               ),
             ),
           ),

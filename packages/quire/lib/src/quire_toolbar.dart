@@ -623,6 +623,14 @@ class _OptionsPanel extends StatelessWidget {
                 onClose();
               },
             ),
+            _OptionRow(
+              label: 'Divider',
+              icon: Icons.horizontal_rule,
+              onTap: () {
+                controller.insertDivider();
+                onClose();
+              },
+            ),
             if (onPickImage != null)
               _OptionRow(
                 label: 'Image',

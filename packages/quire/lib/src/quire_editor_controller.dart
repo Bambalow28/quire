@@ -354,6 +354,19 @@ class QuireEditorController extends ChangeNotifier implements EditListener {
     if (id != null) requestFocus(id);
   }
 
+  /// Inserts a [HorizontalRuleNode] after the focused node, caret in the
+  /// paragraph after it (same as [insertImage]).
+  void insertDivider() {
+    history.execute([
+      InsertNodeRequest(
+        HorizontalRuleNode(id: generateNodeId()),
+        afterNodeId: _focusedNodeId ?? document.nodes.lastOrNull?.id,
+      ),
+    ]);
+    final id = composer.selection?.extent.nodeId;
+    if (id != null) requestFocus(id);
+  }
+
   void _toggle(Attribution attribution) {
     final selection = composer.selection;
     if (selection == null) return;
