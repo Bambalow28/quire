@@ -4,7 +4,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter/material.dart' hide TableCell;
 import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter/services.dart';
@@ -196,6 +197,10 @@ class _QuireEditorState extends State<QuireEditor>
   /// to decide whether to render touch-style selection handles (see
   /// [_buildSelectionHandles]).
   PointerDeviceKind? _lastPointerKind;
+
+  /// True from a right-click's press to its release, so the release doesn't
+  /// run the plain-click path and collapse the selection the menu is for.
+  bool _secondaryDown = false;
 
   bool _pointerDownOnHandle = false;
   int? _startHandlePointerId;
@@ -767,6 +772,13 @@ class _QuireEditorState extends State<QuireEditor>
     _pointerDownOnHandle = _isOnSelectionHandle(event.position);
     if (_pointerDownOnHandle) return;
     _lastPointerKind = event.kind;
+    _secondaryDown =
+        event.kind == PointerDeviceKind.mouse &&
+        event.buttons == kSecondaryMouseButton;
+    if (_secondaryDown) {
+      _openMenuAt(event.position);
+      return;
+    }
     _registerClick(event.position, event.kind);
     final position = _positionAt(event.position);
     if (position != null) {
@@ -810,6 +822,11 @@ class _QuireEditorState extends State<QuireEditor>
   void _handlePointerUp(PointerUpEvent event) {
     if (_pointerDownOnHandle) {
       _pointerDownOnHandle = false;
+      _endDrag();
+      return;
+    }
+    if (_secondaryDown) {
+      _secondaryDown = false;
       _endDrag();
       return;
     }
@@ -863,11 +880,6 @@ class _QuireEditorState extends State<QuireEditor>
       }
     }
     _touchDownAt = null;
-    // Releasing a mouse drag that highlighted text offers Cut/Copy/etc.
-    if (moved && _lastPointerKind == PointerDeviceKind.mouse) {
-      final selection = widget.controller.composer.selection;
-      if (selection != null && !selection.isCollapsed) _showContextMenu();
-    }
     _endDrag();
   }
 
@@ -1854,7 +1866,20 @@ class _QuireEditorState extends State<QuireEditor>
   /// selection) anchored at the selection — the `EditableText.showToolbar`/
   /// `contextMenuBuilder` replacement now that there is no such field to
   /// host it.
-  void _showContextMenu() {
+  /// Right-click: keeps a selection the pointer is inside of, otherwise moves
+  /// the caret to the pointer, then opens the menu at the pointer.
+  void _openMenuAt(Offset globalOffset) {
+    final position = _positionAt(globalOffset);
+    if (position == null || position.nodePosition is! TextNodePosition) return;
+    widget.controller.requestFocus(position.nodeId);
+    final offset = (position.nodePosition as TextNodePosition).offset;
+    if (!_tapWithinSelection(position.nodeId, offset)) {
+      _placeCaret(position.nodeId, offset);
+    }
+    _showContextMenu(anchor: globalOffset);
+  }
+
+  void _showContextMenu({Offset? anchor}) {
     final selection = widget.controller.composer.selection;
     if (selection == null) return;
     final document = widget.controller.document;
@@ -1864,10 +1889,11 @@ class _QuireEditorState extends State<QuireEditor>
     final editorBox =
         _editorKey.currentContext?.findRenderObject() as RenderBox?;
     if (primaryRect == null || editorBox == null || !editorBox.attached) return;
-    final primaryGlobal = editorBox.localToGlobal(primaryRect.topCenter);
-    final secondaryGlobal = editorBox.localToGlobal(
-      (secondaryRect ?? primaryRect).bottomCenter,
-    );
+    final primaryGlobal =
+        anchor ?? editorBox.localToGlobal(primaryRect.topCenter);
+    final secondaryGlobal =
+        anchor ??
+        editorBox.localToGlobal((secondaryRect ?? primaryRect).bottomCenter);
 
     _contextMenuController.show(
       context: context,
@@ -2602,6 +2628,10 @@ class _QuireEditorState extends State<QuireEditor>
     );
   }
 
+  /// Decode ceiling for images (px wide; never upscales). A 12MP photo
+  /// otherwise sits decoded in memory at ~48MB for a column ~800px wide.
+  static const _imageDecodeWidth = 1600;
+
   Widget _buildImageNode(BuildContext context, ImageNode node) {
     Widget errorBuilder(BuildContext context, Object error, StackTrace? st) =>
         Container(
@@ -2614,8 +2644,16 @@ class _QuireEditorState extends State<QuireEditor>
     final isNetwork =
         uri != null && (uri.isScheme('http') || uri.isScheme('https'));
     final image = isNetwork
-        ? Image.network(node.url, errorBuilder: errorBuilder)
-        : Image.file(File(node.url), errorBuilder: errorBuilder);
+        ? Image.network(
+            node.url,
+            cacheWidth: _imageDecodeWidth,
+            errorBuilder: errorBuilder,
+          )
+        : Image.file(
+            File(node.url),
+            cacheWidth: _imageDecodeWidth,
+            errorBuilder: errorBuilder,
+          );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Column(

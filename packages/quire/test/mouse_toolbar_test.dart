@@ -57,7 +57,7 @@ void main() {
     expect(find.text('Copy'), findsOneWidget);
   });
 
-  testWidgets('dragging a highlight opens the options on release', (
+  testWidgets('dragging a highlight keeps it selected without options', (
     tester,
   ) async {
     final c = await _pump(tester);
@@ -65,6 +65,17 @@ void main() {
     final g = await tester.startGesture(start, kind: PointerDeviceKind.mouse);
     await g.moveTo(start + const Offset(80, 0));
     await g.up();
+    await tester.pumpAndSettle();
+    expect(c.composer.selection!.isCollapsed, isFalse);
+    expect(find.text('Copy'), findsNothing);
+
+    // Right-clicking inside the highlight opens the options, keeps it.
+    final r = await tester.startGesture(
+      start + const Offset(40, 0),
+      kind: PointerDeviceKind.mouse,
+      buttons: kSecondaryMouseButton,
+    );
+    await r.up();
     await tester.pumpAndSettle();
     expect(c.composer.selection!.isCollapsed, isFalse);
     expect(find.text('Copy'), findsOneWidget);

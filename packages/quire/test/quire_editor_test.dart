@@ -437,8 +437,10 @@ void main() {
       await _pumpEditor(tester, controller);
 
       final image = tester.widget<Image>(find.byType(Image));
-      expect(image.image, isA<FileImage>());
-      expect((image.image as FileImage).file.path, path);
+      // Wrapped in a ResizeImage so a huge photo isn't decoded at full size.
+      final provider = (image.image as ResizeImage).imageProvider;
+      expect(provider, isA<FileImage>());
+      expect((provider as FileImage).file.path, path);
     },
   );
 
