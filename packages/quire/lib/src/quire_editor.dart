@@ -395,14 +395,18 @@ class _QuireEditorState extends State<QuireEditor>
           children: [
             scrollView,
             // Paints every non-collapsed selection, single-node or not.
+            // Clipped to the viewport: rects of text scrolled out of view
+            // sit outside it and must not bleed over the surrounding UI.
             IgnorePointer(
-              child: CustomPaint(
-                size: Size.infinite,
-                painter: SelectionOverlayPainter(
-                  rects: _computeOverlayRects(),
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.primary.withValues(alpha: 0.3),
+              child: ClipRect(
+                child: CustomPaint(
+                  size: Size.infinite,
+                  painter: SelectionOverlayPainter(
+                    rects: _computeOverlayRects(),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.primary.withValues(alpha: 0.3),
+                  ),
                 ),
               ),
             ),
